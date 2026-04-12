@@ -80,7 +80,7 @@ PopupWidget::PopupWidget(QObject *parent)
         qWarning("stylus-popup: layer surface init failed");
     }
 
-    m_theme.loadFromGsettings();
+    m_theme.loadFromQt6ct();
 
     m_anim->setDuration(kAnimMs);
     /* Re-render on every animation tick (works for both slideIn and slideOut) */

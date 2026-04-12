@@ -88,12 +88,6 @@ bool ColorTheme::loadFromQt6ct()
     return true;
 }
 
-// GSettings support is a planned future enhancement. For now, fall back to
-// the qt6ct matugen config that the KDE desktop already maintains.
-bool ColorTheme::loadFromGsettings()
-{
-    return loadFromQt6ct();
-}
 
 QColor ColorTheme::surface() const { return m_surface; }
 QColor ColorTheme::onSurface() const { return m_onSurface; }

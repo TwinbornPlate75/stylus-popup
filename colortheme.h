@@ -9,7 +9,6 @@ public:
     ColorTheme();
 
     bool loadFromQt6ct();
-    bool loadFromGsettings();
 
     QColor surface() const;
     QColor onSurface() const;
