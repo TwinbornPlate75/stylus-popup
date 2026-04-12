@@ -115,7 +115,7 @@ void PopupWidget::showState(const StylusState &state)
 void PopupWidget::slideIn()
 {
     m_anim->stop();
-    m_anim->setEasingCurve(QEasingCurve::OutCubic);
+    m_anim->setEasingCurve(QEasingCurve::OutExpo);
     m_anim->setStartValue(0);
     m_anim->setEndValue(m_layer->fullHeight());
     m_anim->start();
@@ -126,7 +126,7 @@ void PopupWidget::slideIn()
 void PopupWidget::slideOut()
 {
     m_anim->stop();
-    m_anim->setEasingCurve(QEasingCurve::InCubic);
+    m_anim->setEasingCurve(QEasingCurve::InExpo);
     m_anim->setStartValue(m_layer->visibleHeight());
     m_anim->setEndValue(0);
 
@@ -168,29 +168,11 @@ void PopupWidget::renderFrame()
     const int cardX = (screenW - cardW) / 2;
     const QRect card(cardX, 4, cardW, kHeight - 8);
 
-    /* ── Shadow ── */
-    const int shadowBlur = 10;
-    for (int i = shadowBlur; i > 0; --i) {
-        double t  = 1.0 - double(i) / shadowBlur;
-        QColor sh(0, 0, 0, int(110 * t * t));
-        p.setPen(Qt::NoPen);
-        p.setBrush(sh);
-        p.drawRoundedRect(card.adjusted(-i/2, -i/2+i/3, i/2, i/2),
-                          16 + i/2, 16 + i/2);
-    }
-
     /* ── Card background ── */
     QPainterPath bg;
     bg.addRoundedRect(card, 16, 16);
     p.setBrush(surface);
-    p.setPen(Qt::NoPen);
-    p.drawPath(bg);
-
-    /* Elevation tint */
-    QLinearGradient tint(card.topLeft(), card.bottomLeft());
-    tint.setColorAt(0.0, QColor(255, 255, 255, 18));
-    tint.setColorAt(1.0, QColor(255, 255, 255, 0));
-    p.setBrush(tint);
+    p.setPen(QPen(QColor(255, 255, 255, 30), 1));
     p.drawPath(bg);
 
     /* ── Icon ── */
@@ -207,7 +189,7 @@ void PopupWidget::renderFrame()
     titleFont.setWeight(QFont::Medium);
     p.setFont(titleFont);
     p.setPen(onSurface);
-    p.drawText(textX, card.y() + pad + 14, "Stylus");
+    p.drawText(textX, card.y() + pad + 14, "Xiaomi Stylus Pen 2");
 
     QFont subFont = titleFont;
     subFont.setPixelSize(13);
