@@ -46,7 +46,9 @@ install -Dm644 %{SOURCE1} %{buildroot}%{_userunitdir}/%{name}.service
 systemctl --user daemon-reload > /dev/null 2>&1 || true
 
 %postun
-systemctl --user daemon-reload > /dev/null 2>&1 || true
+if [ $1 -eq 0 ]; then
+    systemctl --user daemon-reload > /dev/null 2>&1 || true
+fi
 
 %files
 %{_bindir}/%{name}
