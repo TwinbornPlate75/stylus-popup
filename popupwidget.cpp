@@ -80,6 +80,8 @@ PopupWidget::PopupWidget(QObject *parent)
         qWarning("stylus-popup: layer surface init failed");
     }
 
+    m_theme.loadFromGsettings();
+
     m_anim->setDuration(kAnimMs);
     /* Re-render on every animation tick (works for both slideIn and slideOut) */
     connect(m_anim, &QPropertyAnimation::valueChanged,
@@ -154,11 +156,11 @@ void PopupWidget::renderFrame()
     p.setRenderHint(QPainter::Antialiasing);
     p.scale(scale, scale);
 
-    const QColor surface      (kSurface);
-    const QColor onSurface    (kOnSurface);
-    const QColor onSurfaceVar (kOnSurfaceVar);
-    const QColor primary      (kPrimary);
-    const QColor progressTrack(kProgressTrack);
+    const QColor surface       = m_theme.isValid() ? m_theme.surface()       : QColor(kSurface);
+    const QColor onSurface     = m_theme.isValid() ? m_theme.onSurface()     : QColor(kOnSurface);
+    const QColor onSurfaceVar  = m_theme.isValid() ? m_theme.onSurfaceVariant() : QColor(kOnSurfaceVar);
+    const QColor primary       = m_theme.isValid() ? m_theme.primary()       : QColor(kPrimary);
+    const QColor progressTrack = m_theme.isValid() ? m_theme.progressTrack() : QColor(kProgressTrack);
 
     /* Card rect: centred horizontally, full height */
     const int pad   = 16;

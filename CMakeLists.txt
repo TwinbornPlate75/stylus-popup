@@ -50,6 +50,8 @@ set(PROJECT_SOURCES
     waylandlayersurface.cpp
     popupwidget.h
     popupwidget.cpp
+    colortheme.h
+    colortheme.cpp
     ${PROTOCOL_HEADER}
     ${PROTOCOL_SRC}
 )

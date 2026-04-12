@@ -5,6 +5,7 @@
 #include <QPropertyAnimation>
 #include <QTimer>
 
+#include "colortheme.h"
 #include "stylusmonitor.h"
 #include "waylandlayersurface.h"
 
@@ -23,7 +24,7 @@ private:
     void slideOut();
     void renderFrame();
 
-    /* MD3 dark-theme palette */
+    /* MD3 dark-theme palette — fallback defaults */
     static constexpr QRgb kSurface       = 0xFF211F26;
     static constexpr QRgb kOnSurface     = 0xFFE6E1E5;
     static constexpr QRgb kOnSurfaceVar  = 0xFFCAC4D0;
@@ -35,6 +36,7 @@ private:
     static constexpr int kAnimMs     = 320;
     static constexpr int kDismissMs  = 4000;
 
+    ColorTheme          m_theme;
     WaylandLayerSurface *m_layer;
     QPropertyAnimation  *m_anim;        /* animates m_layer::visibleHeight */
     QTimer              *m_dismissTimer;
