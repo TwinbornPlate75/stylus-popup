@@ -1,0 +1,12 @@
+[Unit]
+Description=Stylus status popup (Material Design 3)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/stylus-popup
+Restart=on-failure
+Environment=QT_QPA_PLATFORM=wayland
+
+[Install]
+WantedBy=graphical-session.target
