@@ -1,5 +1,6 @@
 #include "stylusmonitor.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/ioctl.h>
@@ -43,6 +44,11 @@ void StylusMonitor::stop()
 
 void StylusMonitor::run()
 {
+    /*
+     * The driver's poll() returns POLLIN only when data_ready is set,
+     * so poll() blocks in the kernel until wake_up() signals it.
+     * With O_NONBLOCK, read() never blocks even if driver is slow.
+     */
     m_fd = open("/dev/idtp9418", O_RDONLY | O_NONBLOCK);
     if (m_fd < 0)
         return;
@@ -51,15 +57,8 @@ void StylusMonitor::run()
     bool first = true;
 
     while (m_running) {
-        /*
-         * The driver's poll() always returns POLLIN immediately (it calls
-         * poll_wait then returns POLLIN|POLLRDNORM unconditionally), so we
-         * use a 500 ms timeout purely as a rate-limiter to avoid busy-looping.
-         * wake_up(&wait_queue) in the kernel will also trigger our poll,
-         * giving sub-500 ms responsiveness on state changes.
-         */
         struct pollfd pfd = { m_fd, POLLIN, 0 };
-        poll(&pfd, 1, 500);
+        poll(&pfd, 1, -1);  /* block indefinitely — driver wakes us */
 
         if (!m_running)
             break;
@@ -74,7 +73,6 @@ void StylusMonitor::run()
         if (changed) {
             prev  = cur;
             first = false;
-            /* Only pop up if the pen is actually there */
             if (cur.attached)
                 emit stateChanged(cur);
         }

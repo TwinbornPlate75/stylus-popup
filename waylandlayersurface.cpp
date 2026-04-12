@@ -150,7 +150,9 @@ bool WaylandLayerSurface::init(int width, int height, uint32_t anchor, Layer lay
      * and keeps the surface always-mapped with no protocol surprises. */
     hide();
 
-    /* Integrate with Qt event loop */
+    /* Integrate with Qt event loop — dispatch Wayland events at 8ms intervals.
+     * wl_display_dispatch_queue_pending is non-blocking so it returns
+     * immediately when there is nothing to process. */
     m_queueTimer = new QTimer(this);
     connect(m_queueTimer, &QTimer::timeout, this, &WaylandLayerSurface::dispatchQueue);
     m_queueTimer->start(8);
