@@ -71,14 +71,9 @@ bool ColorTheme::loadFromQt6ct()
     m_surface          = getColor(data, "Colors:Window",       "BackgroundNormal",      QColor("#211F26"));
     m_onSurface        = getColor(data, "Colors:Window",       "ForegroundNormal",      QColor("#E6E1E5"));
     m_onSurfaceVariant = getColor(data, "Colors:Window",       "ForegroundInactive",    QColor("#CAC4D0"));
-    m_outline          = getColor(data, "Colors:Button",       "ForegroundInactive",    QColor("#938F99"));
     m_primary          = getColor(data, "Colors:Button",       "DecorationFocus",       QColor("#D0BCFF"));
     if (!m_primary.isValid())
         m_primary      = getColor(data, "Colors:View",         "DecorationFocus",       QColor("#D0BCFF"));
-    m_primaryContainer = getColor(data, "Colors:Selection",     "BackgroundNormal",      QColor("#4F378B"));
-    m_secondary        = getColor(data, "Colors:Window",        "ForegroundInactive",   QColor("#CCC2DC"));
-    m_tertiary         = getColor(data, "Colors:View",         "ForegroundLink",        QColor("#EFB8C8"));
-    m_error            = getColor(data, "Colors:Button",       "ForegroundNegative",     QColor("#F2B8B5"));
     m_progressTrack    = getColor(data, "Colors:View",         "BackgroundAlternate",  QColor("#49454F"));
 
     qDebug("colortheme: loaded — surface=%s primary=%s",
@@ -93,9 +88,4 @@ QColor ColorTheme::surface() const { return m_surface; }
 QColor ColorTheme::onSurface() const { return m_onSurface; }
 QColor ColorTheme::onSurfaceVariant() const { return m_onSurfaceVariant; }
 QColor ColorTheme::primary() const { return m_primary; }
-QColor ColorTheme::primaryContainer() const { return m_primaryContainer; }
-QColor ColorTheme::secondary() const { return m_secondary; }
-QColor ColorTheme::tertiary() const { return m_tertiary; }
-QColor ColorTheme::error() const { return m_error; }
-QColor ColorTheme::outline() const { return m_outline; }
 QColor ColorTheme::progressTrack() const { return m_progressTrack; }

@@ -166,16 +166,27 @@ void WaylandLayerSurface::renderImage(const QImage &image)
 {
     if (!m_configured || m_visibleHeight <= 0) return;
 
+    /* Resume the dispatch timer when we have work to do */
+    if (m_queueTimer && !m_queueTimer->isActive())
+        m_queueTimer->start(8);
+
     const int visH     = qBound(1, m_visibleHeight, m_height);
     const int physW    = m_width  * m_scale;
     const int physVisH = visH     * m_scale;
     const int stride   = physW    * 4;
 
-    /* Write physical-pixel rows to SHM */
+    /* Write physical-pixel rows to SHM — bulk copy the visible region */
     QImage src = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-    for (int y = 0; y < physVisH && y < src.height(); ++y)
-        memcpy(m_data + y * stride, src.constScanLine(y),
-               qMin(src.width(), physW) * 4);
+    const int copyW = qMin(src.width(), physW);
+    const int copyH = qMin(src.height(), physVisH);
+    if (src.bytesPerLine() == stride && copyW == physW) {
+        /* Fast path: contiguous buffer, single memcpy */
+        memcpy(m_data, src.constBits(), stride * copyH);
+    } else {
+        /* Slow path: rows may be strides-aligned but width differs */
+        for (int y = 0; y < copyH; ++y)
+            memcpy(m_data + y * stride, src.constScanLine(y), copyW * 4);
+    }
 
     /* Buffer at physical size; set_size in logical pixels */
     auto *buf = wl_shm_pool_create_buffer(m_pool, 0, physW, physVisH,
@@ -196,6 +207,8 @@ void WaylandLayerSurface::renderImage(const QImage &image)
 void WaylandLayerSurface::hide()
 {
     if (!m_surface || !m_configured || !m_pool) return;
+
+    if (m_queueTimer) m_queueTimer->stop();
 
     /* Use a transparent 1-px buffer — keeps the surface mapped so the
      * compositor never needs to send a new configure before the next real

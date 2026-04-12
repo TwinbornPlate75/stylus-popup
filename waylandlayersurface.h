@@ -19,9 +19,6 @@ class WaylandLayerSurface : public QObject
 {
     Q_OBJECT
 
-    /* QPropertyAnimation drives the height to animate slide-in/out */
-    Q_PROPERTY(int visibleHeight READ visibleHeight WRITE setVisibleHeight)
-
 public:
     enum Layer  { Background = 0, Bottom = 1, Top = 2, Overlay = 3 };
     enum Anchor { AnchorTop = 1, AnchorBottom = 2, AnchorLeft = 4, AnchorRight = 8 };

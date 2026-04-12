@@ -5,6 +5,7 @@
 #include <QScreen>
 #include <QGuiApplication>
 #include <QEasingCurve>
+#include <QDateTime>
 
 /* Drawing helpers */
 
@@ -66,7 +67,7 @@ static void drawStylusIcon(QPainter &p, QRect r, QColor color)
 PopupWidget::PopupWidget(QObject *parent)
     : QObject(parent)
     , m_layer(new WaylandLayerSurface(this))
-    , m_anim(new QPropertyAnimation(m_layer, "visibleHeight", this))
+    , m_animTimer(new QTimer(this))
     , m_dismissTimer(new QTimer(this))
 {
     QScreen *scr = QGuiApplication::primaryScreen();
@@ -82,10 +83,11 @@ PopupWidget::PopupWidget(QObject *parent)
 
     m_theme.loadFromQt6ct();
 
-    m_anim->setDuration(kAnimMs);
-    /* Re-render on every animation tick (works for both slideIn and slideOut) */
-    connect(m_anim, &QPropertyAnimation::valueChanged,
-            this, [this](const QVariant &) { renderFrame(); });
+    /* Animation driven by screen refresh rate via QTimer */
+    double refreshRate = scr ? scr->refreshRate() : 60.0;
+    m_animTimer->setInterval(static_cast<int>(1000.0 / refreshRate));
+    m_animTimer->setTimerType(Qt::PreciseTimer);
+    connect(m_animTimer, &QTimer::timeout, this, &PopupWidget::onAnimationTick);
 
     m_dismissTimer->setSingleShot(true);
     m_dismissTimer->setInterval(kDismissMs);
@@ -114,29 +116,47 @@ void PopupWidget::showState(const StylusState &state)
 
 void PopupWidget::slideIn()
 {
-    m_anim->stop();
-    m_anim->setEasingCurve(QEasingCurve::OutExpo);
-    m_anim->setStartValue(0);
-    m_anim->setEndValue(m_layer->fullHeight());
-    m_anim->start();
+    m_animTimer->stop();
+    m_animStart = 0;
+    m_animEnd = m_layer->fullHeight();
+    m_animReversed = false;
+    m_animCurve = QEasingCurve::OutExpo;
+    m_animDuration = kAnimMs;
+    m_animBegin = QDateTime::currentMSecsSinceEpoch();
+    m_animTimer->start();
     m_shown = true;
     m_dismissTimer->start();
 }
 
 void PopupWidget::slideOut()
 {
-    m_anim->stop();
-    m_anim->setEasingCurve(QEasingCurve::InExpo);
-    m_anim->setStartValue(m_layer->visibleHeight());
-    m_anim->setEndValue(0);
-
-    disconnect(m_anim, &QPropertyAnimation::finished, this, nullptr);
-    connect(m_anim, &QPropertyAnimation::finished, this, [this] {
-        m_layer->hide();
-    }, Qt::SingleShotConnection);
-
-    m_anim->start();
+    m_animTimer->stop();
+    m_animStart = m_layer->visibleHeight();
+    m_animEnd = 0;
+    m_animReversed = true;
+    m_animCurve = QEasingCurve::InExpo;
+    m_animDuration = kAnimMs;
+    m_animBegin = QDateTime::currentMSecsSinceEpoch();
+    m_animTimer->start();
     m_shown = false;
+}
+
+void PopupWidget::onAnimationTick()
+{
+    qint64 now = QDateTime::currentMSecsSinceEpoch();
+    double t = qBound(0.0, static_cast<double>(now - m_animBegin) / m_animDuration, 1.0);
+    double progress = m_animCurve.valueForProgress(t);
+
+    int h = static_cast<int>(m_animStart + (m_animEnd - m_animStart) * progress);
+    m_layer->setVisibleHeight(h);
+    renderFrame();
+
+    if (t >= 1.0) {
+        m_animTimer->stop();
+        if (m_animReversed) {
+            m_layer->hide();
+        }
+    }
 }
 
 /* Render the MD3 card to a QImage, then push to the layer surface */
@@ -149,7 +169,11 @@ void PopupWidget::renderFrame()
     int screenW  = scr ? scr->geometry().width() : 1080;
     const int scale = m_layer->scale();
 
-    QImage img(screenW * scale, kHeight * scale, QImage::Format_ARGB32_Premultiplied);
+    /* Reuse image buffer to avoid per-frame allocation churn */
+    static QImage img;
+    if (img.width() != screenW * scale || img.height() != kHeight * scale) {
+        img = QImage(screenW * scale, kHeight * scale, QImage::Format_ARGB32_Premultiplied);
+    }
     img.fill(Qt::transparent);
 
     QPainter p(&img);
