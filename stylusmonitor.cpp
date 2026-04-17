@@ -20,7 +20,7 @@ static StylusState readState(int fd)
     int val = 0;
     if (ioctl(fd, IDTP9418_IOC_GET_ATTACHED,  &val) == 0) s.attached  = val != 0;
     if (ioctl(fd, IDTP9418_IOC_GET_CHARGING,  &val) == 0) s.charging  = val != 0;
-    if (ioctl(fd, IDTP9418_IOC_GET_CAPACITY,  &val) == 0) s.capacity  = val;
+    if (ioctl(fd, IDTP9418_IOC_GET_CAPACITY,  &val) == 0) s.capacity  = qMin(val, 100);
     if (ioctl(fd, IDTP9418_IOC_GET_LIMIT,     &val) == 0) s.limit     = val;
     return s;
 }
