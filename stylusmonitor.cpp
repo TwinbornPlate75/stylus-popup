@@ -3,25 +3,30 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
-#include <sys/ioctl.h>
 #include <unistd.h>
 #include <cmath>
 
-/* ioctl numbers — must match idtp9418.c exactly */
-#define IDTP9418_IOC_MAGIC         'W'
-#define IDTP9418_IOC_GET_CAPACITY  _IOR(IDTP9418_IOC_MAGIC, 0, int)
-#define IDTP9418_IOC_GET_CHARGING  _IOR(IDTP9418_IOC_MAGIC, 1, int)
-#define IDTP9418_IOC_GET_LIMIT     _IOR(IDTP9418_IOC_MAGIC, 2, int)
-#define IDTP9418_IOC_GET_ATTACHED  _IOR(IDTP9418_IOC_MAGIC, 4, int)
+#pragma pack(push, 1)
+struct Idtp9418Event {
+    uint8_t soc;
+    uint8_t is_charging;
+    uint8_t is_attached;
+    uint8_t charge_limit;
+};
+#pragma pack(pop)
 
 static StylusState readState(int fd)
 {
+    Idtp9418Event evt;
+    ssize_t n = read(fd, &evt, sizeof(evt));
+    if (n != sizeof(evt))
+        return {};
+
     StylusState s;
-    int val = 0;
-    if (ioctl(fd, IDTP9418_IOC_GET_ATTACHED,  &val) == 0) s.attached  = val != 0;
-    if (ioctl(fd, IDTP9418_IOC_GET_CHARGING,  &val) == 0) s.charging  = val != 0;
-    if (ioctl(fd, IDTP9418_IOC_GET_CAPACITY,  &val) == 0) s.capacity  = qMin(val, 100);
-    if (ioctl(fd, IDTP9418_IOC_GET_LIMIT,     &val) == 0) s.limit     = val;
+    s.attached  = evt.is_attached != 0;
+    s.charging  = evt.is_charging != 0;
+    s.capacity  = qMin(static_cast<int>(evt.soc), 100);
+    s.limit     = static_cast<int>(evt.charge_limit);
     return s;
 }
 
@@ -44,38 +49,17 @@ void StylusMonitor::stop()
 
 void StylusMonitor::run()
 {
-    /*
-     * The driver's poll() returns POLLIN only when data_ready is set,
-     * so poll() blocks in the kernel until wake_up() signals it.
-     * With O_NONBLOCK, read() never blocks even if driver is slow.
-     */
-    m_fd = open("/dev/idtp9418", O_RDONLY | O_NONBLOCK);
+    m_fd = open("/dev/idtp9418", O_RDONLY);
     if (m_fd < 0)
         return;
 
     StylusState prev;
-    bool first = true;
 
     while (m_running) {
-        struct pollfd pfd = { m_fd, POLLIN, 0 };
-        poll(&pfd, 1, -1);  /* block indefinitely — driver wakes us */
-
-        if (!m_running)
-            break;
-
         StylusState cur = readState(m_fd);
-
-        bool changed = first
-            || cur.attached  != prev.attached
-            || cur.charging  != prev.charging
-            || std::abs(cur.capacity - prev.capacity) >= 1;
-
-        if (changed) {
-            prev  = cur;
-            first = false;
-            if (cur.attached)
-                emit stateChanged(cur);
-        }
+        prev = cur;
+        if (cur.attached)
+            emit stateChanged(cur);
     }
 
     if (m_fd >= 0) {
