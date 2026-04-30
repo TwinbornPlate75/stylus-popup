@@ -4,13 +4,13 @@
 #include <QImage>
 #include <QTimer>
 
+struct wl_buffer;
 struct wl_display;
 struct wl_registry;
 struct wl_compositor;
 struct wl_surface;
 struct wl_shm;
 struct wl_shm_pool;
-struct wl_buffer;
 struct zwlr_layer_shell_v1;
 struct zwlr_layer_surface_v1;
 struct wl_event_queue;
@@ -31,10 +31,18 @@ public:
               Layer layer     = Top);
 
     /**
-     * Render image to the Wayland surface, sized to current visibleHeight.
-     * Only the top visibleHeight rows of the image are displayed.
+     * Re-upload the image content into the persistent SHM buffer.
+     * No-op if the image is byte-identical to the previously uploaded one
+     * (compared via QImage::cacheKey), so callers can invoke this
+     * every frame cheaply.
      */
-    void renderImage(const QImage &image);
+    void updateImage(const QImage &image);
+
+    /**
+     * Re-attach the SHM buffer and commit, with damage covering the
+     * current visibleHeight. Cheap; the same wl_buffer is reused.
+     */
+    void commitFrame();
 
     /**
      * Detach buffer and commit — makes the surface invisible without
@@ -43,15 +51,12 @@ public:
     void hide();
 
     /* Animated property: surface height shown on screen (0 = hidden) */
-    void setVisibleHeight(int h);
+    void setVisibleHeight(int h) { m_visibleHeight = h; }
     int  visibleHeight() const { return m_visibleHeight; }
 
     int  fullHeight() const { return m_height; }
     int  scale()      const { return m_scale; }   /* device pixel ratio */
     bool isReady()    const { return m_configured; }
-
-signals:
-    void configured(int width, int height);
 
 private:
     static void s_registryGlobal(void *data, wl_registry *, uint32_t id,
@@ -63,7 +68,8 @@ private:
 
     bool createPool(int width, int height);
     void destroyPool();
-    void dispatchQueue();
+    bool ensurePoolSize(int physW, int physH);
+    bool ensureBuffer(int physW, int physH, int stride);
 
     wl_display            *m_display      = nullptr;
     wl_event_queue        *m_queue        = nullptr;
@@ -73,16 +79,22 @@ private:
     wl_surface            *m_surface      = nullptr;
     zwlr_layer_surface_v1 *m_layerSurf    = nullptr;
 
-    /* Single persistent SHM pool; wl_buffers are created per-frame */
+    /* SHM pool sized to the full image (reused across frames). The wl_buffer
+     * itself is cropped to the current visH and recreated on size change. */
     wl_shm_pool *m_pool   = nullptr;
+    wl_buffer   *m_buffer = nullptr;
     uint8_t     *m_data   = nullptr;
     int          m_poolFd = -1;
     int          m_poolSz = 0;
+    int          m_bufW   = 0;
+    int          m_bufH   = 0;
 
     int  m_width         = 0;
     int  m_height        = 0;
     int  m_visibleHeight = 0;
     int  m_scale         = 1;   /* device pixel ratio (physical px / logical px) */
+    int  m_committedHeight = 0; /* last size sent to zwlr_layer_surface_v1_set_size */
+    qint64 m_lastImageKey = 0;  /* QImage::cacheKey of the last upload */
     bool m_configured    = false;
 
     QTimer *m_queueTimer = nullptr;

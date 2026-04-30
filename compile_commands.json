@@ -1,0 +1,44 @@
+[
+{
+  "directory": "/home/TwinbornPlate75/stylus-popup/build",
+  "command": "/usr/lib64/ccache/c++ -DQT_CORE_LIB -DQT_GUI_LIB -DQT_NO_DEBUG -DQT_WIDGETS_LIB -I/home/TwinbornPlate75/stylus-popup/build/stylus-popup_autogen/include -I/home/TwinbornPlate75/stylus-popup/build -isystem /usr/include/qt6/QtCore -isystem /usr/include/qt6 -isystem /usr/lib64/qt6/mkspecs/linux-g++ -isystem /usr/include/qt6/QtWidgets -isystem /usr/include/qt6/QtGui -std=gnu++17 -o CMakeFiles/stylus-popup.dir/stylus-popup_autogen/mocs_compilation.cpp.o -c /home/TwinbornPlate75/stylus-popup/build/stylus-popup_autogen/mocs_compilation.cpp",
+  "file": "/home/TwinbornPlate75/stylus-popup/build/stylus-popup_autogen/mocs_compilation.cpp",
+  "output": "CMakeFiles/stylus-popup.dir/stylus-popup_autogen/mocs_compilation.cpp.o"
+},
+{
+  "directory": "/home/TwinbornPlate75/stylus-popup/build",
+  "command": "/usr/lib64/ccache/c++ -DQT_CORE_LIB -DQT_GUI_LIB -DQT_NO_DEBUG -DQT_WIDGETS_LIB -I/home/TwinbornPlate75/stylus-popup/build/stylus-popup_autogen/include -I/home/TwinbornPlate75/stylus-popup/build -isystem /usr/include/qt6/QtCore -isystem /usr/include/qt6 -isystem /usr/lib64/qt6/mkspecs/linux-g++ -isystem /usr/include/qt6/QtWidgets -isystem /usr/include/qt6/QtGui -std=gnu++17 -o CMakeFiles/stylus-popup.dir/main.cpp.o -c /home/TwinbornPlate75/stylus-popup/main.cpp",
+  "file": "/home/TwinbornPlate75/stylus-popup/main.cpp",
+  "output": "CMakeFiles/stylus-popup.dir/main.cpp.o"
+},
+{
+  "directory": "/home/TwinbornPlate75/stylus-popup/build",
+  "command": "/usr/lib64/ccache/c++ -DQT_CORE_LIB -DQT_GUI_LIB -DQT_NO_DEBUG -DQT_WIDGETS_LIB -I/home/TwinbornPlate75/stylus-popup/build/stylus-popup_autogen/include -I/home/TwinbornPlate75/stylus-popup/build -isystem /usr/include/qt6/QtCore -isystem /usr/include/qt6 -isystem /usr/lib64/qt6/mkspecs/linux-g++ -isystem /usr/include/qt6/QtWidgets -isystem /usr/include/qt6/QtGui -std=gnu++17 -o CMakeFiles/stylus-popup.dir/stylusmonitor.cpp.o -c /home/TwinbornPlate75/stylus-popup/stylusmonitor.cpp",
+  "file": "/home/TwinbornPlate75/stylus-popup/stylusmonitor.cpp",
+  "output": "CMakeFiles/stylus-popup.dir/stylusmonitor.cpp.o"
+},
+{
+  "directory": "/home/TwinbornPlate75/stylus-popup/build",
+  "command": "/usr/lib64/ccache/c++ -DQT_CORE_LIB -DQT_GUI_LIB -DQT_NO_DEBUG -DQT_WIDGETS_LIB -I/home/TwinbornPlate75/stylus-popup/build/stylus-popup_autogen/include -I/home/TwinbornPlate75/stylus-popup/build -isystem /usr/include/qt6/QtCore -isystem /usr/include/qt6 -isystem /usr/lib64/qt6/mkspecs/linux-g++ -isystem /usr/include/qt6/QtWidgets -isystem /usr/include/qt6/QtGui -std=gnu++17 -o CMakeFiles/stylus-popup.dir/waylandlayersurface.cpp.o -c /home/TwinbornPlate75/stylus-popup/waylandlayersurface.cpp",
+  "file": "/home/TwinbornPlate75/stylus-popup/waylandlayersurface.cpp",
+  "output": "CMakeFiles/stylus-popup.dir/waylandlayersurface.cpp.o"
+},
+{
+  "directory": "/home/TwinbornPlate75/stylus-popup/build",
+  "command": "/usr/lib64/ccache/c++ -DQT_CORE_LIB -DQT_GUI_LIB -DQT_NO_DEBUG -DQT_WIDGETS_LIB -I/home/TwinbornPlate75/stylus-popup/build/stylus-popup_autogen/include -I/home/TwinbornPlate75/stylus-popup/build -isystem /usr/include/qt6/QtCore -isystem /usr/include/qt6 -isystem /usr/lib64/qt6/mkspecs/linux-g++ -isystem /usr/include/qt6/QtWidgets -isystem /usr/include/qt6/QtGui -std=gnu++17 -o CMakeFiles/stylus-popup.dir/popupwidget.cpp.o -c /home/TwinbornPlate75/stylus-popup/popupwidget.cpp",
+  "file": "/home/TwinbornPlate75/stylus-popup/popupwidget.cpp",
+  "output": "CMakeFiles/stylus-popup.dir/popupwidget.cpp.o"
+},
+{
+  "directory": "/home/TwinbornPlate75/stylus-popup/build",
+  "command": "/usr/lib64/ccache/c++ -DQT_CORE_LIB -DQT_GUI_LIB -DQT_NO_DEBUG -DQT_WIDGETS_LIB -I/home/TwinbornPlate75/stylus-popup/build/stylus-popup_autogen/include -I/home/TwinbornPlate75/stylus-popup/build -isystem /usr/include/qt6/QtCore -isystem /usr/include/qt6 -isystem /usr/lib64/qt6/mkspecs/linux-g++ -isystem /usr/include/qt6/QtWidgets -isystem /usr/include/qt6/QtGui -std=gnu++17 -o CMakeFiles/stylus-popup.dir/colortheme.cpp.o -c /home/TwinbornPlate75/stylus-popup/colortheme.cpp",
+  "file": "/home/TwinbornPlate75/stylus-popup/colortheme.cpp",
+  "output": "CMakeFiles/stylus-popup.dir/colortheme.cpp.o"
+},
+{
+  "directory": "/home/TwinbornPlate75/stylus-popup/build",
+  "command": "/usr/lib64/ccache/cc -DQT_CORE_LIB -DQT_GUI_LIB -DQT_NO_DEBUG -DQT_WIDGETS_LIB -I/home/TwinbornPlate75/stylus-popup/build/stylus-popup_autogen/include -I/home/TwinbornPlate75/stylus-popup/build -isystem /usr/include/qt6/QtCore -isystem /usr/include/qt6 -isystem /usr/lib64/qt6/mkspecs/linux-g++ -isystem /usr/include/qt6/QtWidgets -isystem /usr/include/qt6/QtGui -x c  -o CMakeFiles/stylus-popup.dir/wlr-layer-shell-unstable-v1-client-protocol.c.o -c /home/TwinbornPlate75/stylus-popup/build/wlr-layer-shell-unstable-v1-client-protocol.c",
+  "file": "/home/TwinbornPlate75/stylus-popup/build/wlr-layer-shell-unstable-v1-client-protocol.c",
+  "output": "CMakeFiles/stylus-popup.dir/wlr-layer-shell-unstable-v1-client-protocol.c.o"
+}
+]

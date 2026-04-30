@@ -83,10 +83,6 @@
 
     <request name="destroy" type="destructor"/>
 
-    <request name="set_layer" since="2">
-      <arg name="layer" type="uint" enum="zwlr_layer_shell_v1.layer"/>
-    </request>
-
     <event name="configure">
       <arg name="serial" type="uint"/>
       <arg name="width"  type="uint"/>
@@ -94,5 +90,9 @@
     </event>
 
     <event name="closed"/>
+
+    <request name="set_layer" since="2">
+      <arg name="layer" type="uint" enum="zwlr_layer_shell_v1.layer"/>
+    </request>
   </interface>
 </protocol>

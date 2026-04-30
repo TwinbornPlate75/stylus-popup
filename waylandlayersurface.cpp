@@ -7,7 +7,6 @@
 
 #include <QGuiApplication>
 #include <QScreen>
-#include <QTimer>
 #include <QtGui/qguiapplication_platform.h>
 
 #include <sys/mman.h>
@@ -15,7 +14,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <cstring>
-#include <cerrno>
 
 /*
  * Stub for xdg_popup_interface referenced by the layer-shell generated code
@@ -26,7 +24,26 @@ extern "C" const struct wl_interface xdg_popup_interface = {
     "xdg_popup", 6, 0, nullptr, 0, nullptr
 };
 
+/* Buffer listener - for reused buffers, just mark released; orphaned ones are destroyed */
+static const wl_buffer_listener s_bufferListener = {
+    [](void *data, wl_buffer *b) {
+        auto **owned = static_cast<wl_buffer **>(data);
+        if (*owned == b)
+            return;  /* still our current reusable buffer */
+        wl_buffer_destroy(b);
+    }
+};
+
 /* anonymous fd helper */
+
+static bool flushDisplay(wl_display *display)
+{
+    while (wl_display_flush(display) < 0) {
+        if (errno != EAGAIN && errno != EINTR)
+            return false;
+    }
+    return true;
+}
 
 static int makeAnonFd(int size)
 {
@@ -41,10 +58,12 @@ static int makeAnonFd(int size)
     {
         int rnd = open("/dev/urandom", O_RDONLY);
         if (rnd >= 0) {
-            read(rnd, name + 12, 6);
+            ssize_t n = read(rnd, name + 12, 6);
             close(rnd);
-            for (int i = 12; i < 18; ++i)
-                name[i] = 'a' + (name[i] & 0xf);
+            if (n == 6) {
+                for (int i = 12; i < 18; ++i)
+                    name[i] = 'a' + (name[i] & 0xf);
+            }
         }
     }
     int sfd = shm_open(name, O_CREAT | O_RDWR | O_EXCL, 0600);
@@ -56,11 +75,14 @@ static int makeAnonFd(int size)
 
 /* WaylandLayerSurface */
 
-WaylandLayerSurface::WaylandLayerSurface(QObject *parent) : QObject(parent) {}
+WaylandLayerSurface::WaylandLayerSurface(QObject *parent)
+    : QObject(parent)
+    , m_queueTimer(new QTimer(this))
+{}
 
 WaylandLayerSurface::~WaylandLayerSurface()
 {
-    if (m_queueTimer) m_queueTimer->stop();
+    m_queueTimer->stop();
     destroyPool();
     if (m_layerSurf)  zwlr_layer_surface_v1_destroy(m_layerSurf);
     if (m_surface)    wl_surface_destroy(m_surface);
@@ -77,8 +99,7 @@ bool WaylandLayerSurface::init(int width, int height, uint32_t anchor, Layer lay
 
     /* Device pixel ratio — used to allocate physical-pixel SHM buffers */
     QScreen *scr = QGuiApplication::primaryScreen();
-    m_scale = scr ? static_cast<int>(scr->devicePixelRatio()) : 1;
-    if (m_scale < 1) m_scale = 1;
+    m_scale = scr ? std::max(1, qRound(scr->devicePixelRatio())) : 1;
 
     /* wl_display via Qt6 native interface */
     auto *wlApp = qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
@@ -150,24 +171,51 @@ bool WaylandLayerSurface::init(int width, int height, uint32_t anchor, Layer lay
      * and keeps the surface always-mapped with no protocol surprises. */
     hide();
 
-    /* Integrate with Qt event loop — dispatch Wayland events at 8ms intervals.
-     * wl_display_dispatch_queue_pending is non-blocking so it returns
-     * immediately when there is nothing to process. */
-    m_queueTimer = new QTimer(this);
-    connect(m_queueTimer, &QTimer::timeout, this, &WaylandLayerSurface::dispatchQueue);
-    m_queueTimer->start(8);
+    /* Integrate with Qt event loop — dispatch Wayland events only when surface
+     * is visible. The timer is started/stopped in commitFrame() and hide(). */
+    connect(m_queueTimer, &QTimer::timeout, this, [this] {
+        wl_display_dispatch_queue_pending(m_display, m_queue);
+    });
 
     return true;
 }
 
 /* Public API */
 
-void WaylandLayerSurface::renderImage(const QImage &image)
+void WaylandLayerSurface::updateImage(const QImage &image)
 {
-    if (!m_configured || m_visibleHeight <= 0) return;
+    if (!m_configured || !m_surface || !m_pool) return;
 
-    /* Resume the dispatch timer when we have work to do */
-    if (m_queueTimer && !m_queueTimer->isActive())
+    /* The persistent SHM pool is always the full image height. The wl_buffer
+     * we attach is cropped to the current visH, so the pool must contain the
+     * full image — otherwise the bottom row of a freshly-grown buffer would
+     * be uninitialised (or stale) when visH increases between commits. */
+    const qint64 key = image.cacheKey();
+    if (key == m_lastImageKey)
+        return;  /* content unchanged; nothing to copy */
+    m_lastImageKey = key;
+
+    const int physW  = m_width  * m_scale;
+    const int stride = physW * 4;
+
+    if (!ensurePoolSize(physW, m_height * m_scale))
+        return;
+
+    const int copyW = qMin(image.width(),  physW);
+    const int copyH = qMin(image.height(), m_height * m_scale);
+    if (image.bytesPerLine() == stride && copyW == physW) {
+        memcpy(m_data, image.constBits(), stride * copyH);
+    } else {
+        for (int y = 0; y < copyH; ++y)
+            memcpy(m_data + y * stride, image.constScanLine(y), copyW * 4);
+    }
+}
+
+void WaylandLayerSurface::commitFrame()
+{
+    if (!m_configured || !m_surface || !m_pool || m_visibleHeight <= 0) return;
+
+    if (!m_queueTimer->isActive())
         m_queueTimer->start(8);
 
     const int visH     = qBound(1, m_visibleHeight, m_height);
@@ -175,73 +223,66 @@ void WaylandLayerSurface::renderImage(const QImage &image)
     const int physVisH = visH     * m_scale;
     const int stride   = physW    * 4;
 
-    /* Write physical-pixel rows to SHM — bulk copy the visible region */
-    QImage src = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-    const int copyW = qMin(src.width(), physW);
-    const int copyH = qMin(src.height(), physVisH);
-    if (src.bytesPerLine() == stride && copyW == physW) {
-        /* Fast path: contiguous buffer, single memcpy */
-        memcpy(m_data, src.constBits(), stride * copyH);
-    } else {
-        /* Slow path: rows may be strides-aligned but width differs */
-        for (int y = 0; y < copyH; ++y)
-            memcpy(m_data + y * stride, src.constScanLine(y), copyW * 4);
+    /* The wl_buffer is cropped to visH so the compositor renders exactly that
+     * many rows; reusing a full-size buffer here would cause residue when
+     * retracting, because the buffer size is what the compositor uses as the
+     * actual surface dimensions. */
+    if (!ensureBuffer(physW, physVisH, stride))
+        return;
+
+    if (visH != m_committedHeight) {
+        zwlr_layer_surface_v1_set_size(m_layerSurf, m_width, visH);
+        m_committedHeight = visH;
     }
 
-    /* Buffer at physical size; set_size in logical pixels */
-    auto *buf = wl_shm_pool_create_buffer(m_pool, 0, physW, physVisH,
-                                           stride, WL_SHM_FORMAT_ARGB8888);
-    static const wl_buffer_listener bl = {
-        [](void *, wl_buffer *b) { wl_buffer_destroy(b); }
-    };
-    wl_buffer_add_listener(buf, &bl, nullptr);
-
-    zwlr_layer_surface_v1_set_size(m_layerSurf, m_width, visH);  /* logical */
-
-    wl_surface_attach(m_surface, buf, 0, 0);
-    wl_surface_damage_buffer(m_surface, 0, 0, physW, physVisH);   /* physical */
+    wl_surface_attach(m_surface, m_buffer, 0, 0);
+    wl_surface_damage_buffer(m_surface, 0, 0, physW, physVisH);
     wl_surface_commit(m_surface);
-    wl_display_flush(m_display);
+    flushDisplay(m_display);
 }
 
 void WaylandLayerSurface::hide()
 {
     if (!m_surface || !m_configured || !m_pool) return;
 
-    if (m_queueTimer) m_queueTimer->stop();
+    m_queueTimer->stop();
 
-    /* Use a transparent 1-px buffer — keeps the surface mapped so the
-     * compositor never needs to send a new configure before the next real
-     * buffer.  Explicitly zero the first row since renderImage may have
-     * written non-transparent pixels there. */
-    memset(m_data, 0, m_width * m_scale * 4);
+    /* Wipe the pool so no stale content remains visible on next slide-in,
+     * and invalidate the cache key so the next updateImage re-uploads. */
+    memset(m_data, 0, m_poolSz);
+    m_lastImageKey = 0;
 
-    static const wl_buffer_listener bl = {
-        [](void *, wl_buffer *b) { wl_buffer_destroy(b); }
-    };
-    auto *buf = wl_shm_pool_create_buffer(m_pool, 0,
-                                           m_width * m_scale, 1,
-                                           m_width * m_scale * 4, WL_SHM_FORMAT_ARGB8888);
-    wl_buffer_add_listener(buf, &bl, nullptr);
+    const int physW  = m_width * m_scale;
+    const int stride = physW * 4;
+    if (!ensureBuffer(physW, 1, stride))
+        return;
 
     zwlr_layer_surface_v1_set_size(m_layerSurf, m_width, 1);
-    wl_surface_attach(m_surface, buf, 0, 0);
-    wl_surface_damage_buffer(m_surface, 0, 0, m_width * m_scale, 1);
+    m_committedHeight = 1;
+
+    wl_surface_attach(m_surface, m_buffer, 0, 0);
+    wl_surface_damage_buffer(m_surface, 0, 0, physW, 1);
     wl_surface_commit(m_surface);
-    wl_display_flush(m_display);
-    /* m_configured intentionally left true — surface stays mapped */
+    flushDisplay(m_display);
 }
 
-void WaylandLayerSurface::setVisibleHeight(int h)
+bool WaylandLayerSurface::ensureBuffer(int physW, int physH, int stride)
 {
-    m_visibleHeight = h;
-    /* Actual rendering is driven by PopupWidget::renderFrame() via
-     * QPropertyAnimation::valueChanged → renderFrame() */
-}
+    if (m_buffer && m_bufW == physW && m_bufH == physH)
+        return true;
 
-void WaylandLayerSurface::dispatchQueue()
-{
-    wl_display_dispatch_queue_pending(m_display, m_queue);
+    if (m_buffer) {
+        wl_buffer_destroy(m_buffer);
+        m_buffer = nullptr;
+    }
+    m_buffer = wl_shm_pool_create_buffer(m_pool, 0, physW, physH,
+                                          stride, WL_SHM_FORMAT_ARGB8888);
+    if (!m_buffer)
+        return false;
+    wl_buffer_add_listener(m_buffer, &s_bufferListener, &m_buffer);
+    m_bufW = physW;
+    m_bufH = physH;
+    return true;
 }
 
 /* Registry callbacks */
@@ -271,11 +312,8 @@ void WaylandLayerSurface::s_lsConfigure(void *data, zwlr_layer_surface_v1 *surf,
 {
     auto *self = static_cast<WaylandLayerSurface *>(data);
     zwlr_layer_surface_v1_ack_configure(surf, serial);
-    /* Accept compositor's width (it knows the actual output width).
-     * Do NOT update m_height — we manage height ourselves via visibleHeight. */
     if (w > 0) self->m_width = static_cast<int>(w);
     self->m_configured = true;
-    emit self->configured(self->m_width, self->m_height);
 }
 
 void WaylandLayerSurface::s_lsClosed(void *data, zwlr_layer_surface_v1 *)
@@ -305,7 +343,19 @@ bool WaylandLayerSurface::createPool(int width, int height)
 
 void WaylandLayerSurface::destroyPool()
 {
+    if (m_buffer) { wl_buffer_destroy(m_buffer); m_buffer = nullptr; m_bufW = 0; m_bufH = 0; }
     if (m_pool)  { wl_shm_pool_destroy(m_pool);    m_pool  = nullptr; }
     if (m_data)  { munmap(m_data, m_poolSz);        m_data  = nullptr; }
     if (m_poolFd >= 0) { close(m_poolFd);           m_poolFd = -1; }
+}
+
+bool WaylandLayerSurface::ensurePoolSize(int physW, int physH)
+{
+    const int needed = physW * physH * 4;
+    if (needed <= m_poolSz && m_pool)
+        return true;
+
+    qWarning("layer-shell: resizing SHM pool %d -> %d", m_poolSz, needed);
+    destroyPool();
+    return createPool(physW, physH);
 }

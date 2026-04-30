@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QColor>
-#include <QString>
 
 class ColorTheme
 {
@@ -10,13 +9,11 @@ public:
 
     bool loadFromQt6ct();
 
-    QColor surface() const;
-    QColor onSurface() const;
-    QColor onSurfaceVariant() const;
-    QColor primary() const;
-    QColor progressTrack() const;
-
-    bool isValid() const { return m_valid; }
+    const QColor &surface()          const { return m_surface; }
+    const QColor &onSurface()        const { return m_onSurface; }
+    const QColor &onSurfaceVariant() const { return m_onSurfaceVariant; }
+    const QColor &primary()          const { return m_primary; }
+    const QColor &progressTrack()    const { return m_progressTrack; }
 
 private:
     QColor m_surface;
@@ -24,5 +21,4 @@ private:
     QColor m_onSurfaceVariant;
     QColor m_primary;
     QColor m_progressTrack;
-    bool m_valid = false;
 };

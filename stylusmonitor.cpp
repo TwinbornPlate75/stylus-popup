@@ -1,33 +1,34 @@
 #include "stylusmonitor.h"
 
-#include <errno.h>
 #include <fcntl.h>
-#include <poll.h>
 #include <unistd.h>
-#include <cmath>
+#include <cerrno>
 
-#pragma pack(push, 1)
 struct Idtp9418Event {
     uint8_t soc;
     uint8_t is_charging;
     uint8_t is_attached;
     uint8_t charge_limit;
 };
-#pragma pack(pop)
 
-static StylusState readState(int fd)
+static bool readState(int fd, StylusState *out)
 {
     Idtp9418Event evt;
-    ssize_t n = read(fd, &evt, sizeof(evt));
-    if (n != sizeof(evt))
-        return {};
+    ssize_t n;
+    do {
+        n = read(fd, &evt, sizeof(evt));
+    } while (n < 0 && errno == EINTR);
 
-    StylusState s;
-    s.attached  = evt.is_attached != 0;
-    s.charging  = evt.is_charging != 0;
-    s.capacity  = qMin(static_cast<int>(evt.soc), 100);
-    s.limit     = static_cast<int>(evt.charge_limit);
-    return s;
+    if (n != sizeof(evt))
+        return false;
+
+    *out = {
+        evt.is_attached != 0,
+        evt.is_charging != 0,
+        qMin(static_cast<int>(evt.soc), 100),
+        static_cast<int>(evt.charge_limit)
+    };
+    return true;
 }
 
 StylusMonitor::StylusMonitor(QObject *parent) : QThread(parent) {}
@@ -40,30 +41,30 @@ StylusMonitor::~StylusMonitor()
 
 void StylusMonitor::stop()
 {
-    m_running = false;
-    if (m_fd >= 0) {
-        close(m_fd);
-        m_fd = -1;
-    }
+    m_running.store(false, std::memory_order_release);
+    int fd = m_fd.exchange(-1, std::memory_order_acq_rel);
+    if (fd >= 0)
+        close(fd);
 }
 
 void StylusMonitor::run()
 {
-    m_fd = open("/dev/idtp9418", O_RDONLY);
-    if (m_fd < 0)
+    int fd = open("/dev/idtp9418", O_RDONLY);
+    if (fd < 0)
         return;
 
-    StylusState prev;
+    m_fd.store(fd, std::memory_order_release);
 
-    while (m_running) {
-        StylusState cur = readState(m_fd);
-        prev = cur;
-        if (cur.attached)
-            emit stateChanged(cur);
+    while (m_running.load(std::memory_order_acquire)) {
+        StylusState cur;
+        if (!readState(fd, &cur))
+            break;
+        if (!cur.attached)
+            break;
+        emit stateChanged(cur);
     }
 
-    if (m_fd >= 0) {
-        close(m_fd);
-        m_fd = -1;
-    }
+    fd = m_fd.exchange(-1, std::memory_order_acq_rel);
+    if (fd >= 0)
+        close(fd);
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QThread>
+#include <atomic>
 
 struct StylusState {
     bool attached  = false;
@@ -14,7 +15,10 @@ struct StylusState {
             && capacity == other.capacity
             && limit == other.limit;
     }
-    bool operator!=(const StylusState &other) const { return !(*this == other); }
+
+    bool operator!=(const StylusState &other) const {
+        return !(*this == other);
+    }
 };
 
 class StylusMonitor : public QThread
@@ -34,6 +38,6 @@ protected:
     void run() override;
 
 private:
-    volatile bool m_running = true;
-    int           m_fd      = -1;
+    std::atomic<bool> m_running{true};
+    std::atomic<int>  m_fd{-1};
 };
