@@ -1,5 +1,7 @@
 build/
 .qtcreator/
 .claude/settings.local.json
+.cache/
+compile_commands.json
 *.user
 *.autosave

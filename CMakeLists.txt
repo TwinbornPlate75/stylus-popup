@@ -43,15 +43,15 @@ set_source_files_properties(${PROTOCOL_HEADER} PROPERTIES GENERATED TRUE)
 
 # ── Sources ────────────────────────────────────────────────────────────────
 set(PROJECT_SOURCES
-    main.cpp
-    stylusmonitor.h
-    stylusmonitor.cpp
-    waylandlayersurface.h
-    waylandlayersurface.cpp
-    popupwidget.h
-    popupwidget.cpp
-    colortheme.h
-    colortheme.cpp
+    src/main.cpp
+    src/stylusmonitor.h
+    src/stylusmonitor.cpp
+    src/waylandlayersurface.h
+    src/waylandlayersurface.cpp
+    src/popupwidget.h
+    src/popupwidget.cpp
+    src/colortheme.h
+    src/colortheme.cpp
     ${PROTOCOL_HEADER}
     ${PROTOCOL_SRC}
 )
