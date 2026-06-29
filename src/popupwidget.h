@@ -7,8 +7,8 @@
 #include <QImage>
 #include <QRect>
 #include <QFont>
-#include <QPainterPath>
-#include <QPen>
+
+class QPainter;
 
 #include "colortheme.h"
 #include "stylusmonitor.h"
@@ -35,23 +35,23 @@ private:
     void onAnimationTick();
     void onSpinnerTick();
     void updateLayoutCache();
-    void updateStatusText();
     int  targetHeightForState() const;
     bool canShowFinal() const;
+    void drawFinalContent(QPainter &p);
+    void drawLimitBadge(QPainter &p);
 
-    static constexpr int kWidth         = 280;
-    static constexpr int kHeight        = 92;
-    static constexpr int kWaitingHeight = 50;
-    static constexpr int kAnimMs        = 320;
-    static constexpr int kDismissMs     = 4000;
-    static constexpr int kBarH          = 5;
-    static constexpr int kIconW         = 28;
-    static constexpr int kIconH         = 44;
-    static constexpr int kBatW          = 20;
-    static constexpr int kBatH          = 32;
-    static constexpr int kPad           = 14;
-    static constexpr int kSpinnerSize   = 20;
-    static constexpr int kSpinnerMs     = 16;
+    static constexpr int kSurfaceHeight   = 110;
+    static constexpr int kCapsuleWidth    = 260;
+    static constexpr int kCapsuleHeight   = 66;
+    static constexpr int kCapsuleTopMargin= 4;
+    static constexpr int kWaitingWidth    = 132;
+    static constexpr int kWaitingHeight   = 38;
+    static constexpr int kBatteryGlyphSize= 44;
+    static constexpr int kPad             = 14;
+    static constexpr int kAnimMs          = 280;
+    static constexpr int kDismissMs       = 4000;
+    static constexpr int kSpinnerSize     = 16;
+    static constexpr int kSpinnerMs       = 16;
 
     ColorTheme          m_theme;
     WaylandLayerSurface *m_layer;
@@ -64,6 +64,9 @@ private:
     bool                 m_btConnected = false;
     int                  m_screenW = 1080;
     int                  m_spinnerAngle = 0;
+    bool                 m_morphing = false;
+    qreal                m_morphProgress = 0.0;
+    qreal                m_pulsePhase = 0.0;
 
     int m_animStart = 0;
     int m_animEnd   = 0;
@@ -71,24 +74,13 @@ private:
     QEasingCurve m_animCurve;
 
     QImage m_imageBuffer;
-    QRect  m_cardRect;
-    QRect  m_waitingCardRect;
-    QPainterPath m_cardPath;
-    QPainterPath m_waitingCardPath;
-    QPen   m_borderPen;
-    int    m_textX = 0;
-    int    m_titleY = 0;
-    int    m_subY   = 0;
-    int    m_barW   = 0;
-    int    m_barY   = 0;
-    int    m_iconX  = 0;
-    int    m_iconY  = 0;
-    int    m_batX   = 0;
-    int    m_batY   = 0;
+
+    QRect        m_capsuleRect;
+    QRect        m_waitingChipRect;
+    QRect        m_glyphRect;
+    QRect        m_textRect;
+    QRect        m_limitRect;
 
     QFont  m_titleFont;
     QFont  m_subFont;
-    QFont  m_limitFont;
-    QString m_statusText;
-    QString m_limitText;
 };

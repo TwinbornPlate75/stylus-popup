@@ -19,6 +19,8 @@ ColorTheme::ColorTheme()
     , m_onSurfaceVariant("#CAC4D0")
     , m_primary("#D0BCFF")
     , m_progressTrack("#49454F")
+    , m_lowBattery("#FF6E6E")
+    , m_charging("#79FFC1")
 {
 }
 
@@ -42,6 +44,8 @@ bool ColorTheme::loadFromQt6ct()
     m_onSurfaceVariant = get("Colors:Window/ForegroundInactive",  m_onSurfaceVariant);
     m_primary          = get("Colors:Button/DecorationFocus",     m_primary);
     m_progressTrack    = get("Colors:View/BackgroundAlternate",   m_progressTrack);
+    m_lowBattery       = get("Colors:Button/BackgroundNegative",  m_lowBattery);
+    m_charging         = get("Colors:Button/BackgroundPositive",  m_charging);
 
     qDebug("colortheme: loaded — surface=%s primary=%s",
            qPrintable(m_surface.name()), qPrintable(m_primary.name()));
