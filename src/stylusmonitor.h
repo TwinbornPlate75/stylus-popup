@@ -1,19 +1,31 @@
 #pragma once
 
 #include <QThread>
+#include <QString>
 #include <atomic>
 
+enum class StylusPhase {
+    Attaching = 1,
+    Complete  = 2
+};
+
 struct StylusState {
-    bool attached  = false;
-    bool charging  = false;
-    int  capacity  = 0;
-    int  limit     = 85;
+    bool        attached  = false;
+    bool        charging  = false;
+    int         capacity  = 0;
+    int         limit     = 85;
+    QString     macAddress;
+    bool        macValid  = false;
+    StylusPhase phase     = StylusPhase::Complete;
 
     bool operator==(const StylusState &other) const {
         return attached == other.attached
             && charging == other.charging
             && capacity == other.capacity
-            && limit == other.limit;
+            && limit == other.limit
+            && macAddress == other.macAddress
+            && macValid == other.macValid
+            && phase == other.phase;
     }
 
     bool operator!=(const StylusState &other) const {

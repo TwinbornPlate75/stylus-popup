@@ -8,7 +8,7 @@ Wayland. It needs modified IDTP9418 driver to receive stylus status.
 
 Requirements:
 
-- Qt 5 or Qt 6 (`Widgets`, `Gui`)
+- Qt 5 or Qt 6 (`Widgets`, `Gui`, `DBus`)
 - `wayland-client`
 - `wayland-scanner`
 - `cmake` ≥ 3.16

@@ -23,35 +23,47 @@ public:
 
 public slots:
     void showState(const StylusState &state);
+    void onBtConnected();
+    void onBtConnectionFailed(const QString &error);
 
 private:
-    void slideIn();
+    void slideIn(int targetHeight);
     void slideOut();
     void startAnimation(int fromH, int toH, const QEasingCurve &curve);
+    void transitionToFinal();
     void renderFrame();
     void onAnimationTick();
+    void onSpinnerTick();
     void updateLayoutCache();
     void updateStatusText();
+    int  targetHeightForState() const;
+    bool canShowFinal() const;
 
-    static constexpr int kWidth      = 400;
-    static constexpr int kHeight     = 108;
-    static constexpr int kAnimMs     = 320;
-    static constexpr int kDismissMs  = 4000;
-    static constexpr int kBarH       = 6;
-    static constexpr int kIconW      = 32;
-    static constexpr int kIconH      = 52;
-    static constexpr int kBatW       = 22;
-    static constexpr int kBatH       = 38;
-    static constexpr int kPad        = 16;
+    static constexpr int kWidth         = 280;
+    static constexpr int kHeight        = 92;
+    static constexpr int kWaitingHeight = 50;
+    static constexpr int kAnimMs        = 320;
+    static constexpr int kDismissMs     = 4000;
+    static constexpr int kBarH          = 5;
+    static constexpr int kIconW         = 28;
+    static constexpr int kIconH         = 44;
+    static constexpr int kBatW          = 20;
+    static constexpr int kBatH          = 32;
+    static constexpr int kPad           = 14;
+    static constexpr int kSpinnerSize   = 20;
+    static constexpr int kSpinnerMs     = 16;
 
     ColorTheme          m_theme;
     WaylandLayerSurface *m_layer;
     QTimer              *m_animTimer;
     QTimer              *m_dismissTimer;
+    QTimer              *m_spinnerTimer;
     StylusState          m_state;
     bool                 m_shown  = false;
     bool                 m_dirty  = true;
+    bool                 m_btConnected = false;
     int                  m_screenW = 1080;
+    int                  m_spinnerAngle = 0;
 
     int m_animStart = 0;
     int m_animEnd   = 0;
@@ -60,7 +72,9 @@ private:
 
     QImage m_imageBuffer;
     QRect  m_cardRect;
+    QRect  m_waitingCardRect;
     QPainterPath m_cardPath;
+    QPainterPath m_waitingCardPath;
     QPen   m_borderPen;
     int    m_textX = 0;
     int    m_titleY = 0;

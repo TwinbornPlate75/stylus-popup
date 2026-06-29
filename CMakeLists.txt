@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Gui)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Gui DBus)
 
 # ── Wayland layer-shell protocol code generation ───────────────────────────
 include(FindPkgConfig)
@@ -52,6 +52,8 @@ set(PROJECT_SOURCES
     src/popupwidget.cpp
     src/colortheme.h
     src/colortheme.cpp
+    src/bluezmanager.h
+    src/bluezmanager.cpp
     ${PROTOCOL_HEADER}
     ${PROTOCOL_SRC}
 )
@@ -75,6 +77,7 @@ target_include_directories(stylus-popup PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(stylus-popup PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
     Qt${QT_VERSION_MAJOR}::Gui
+    Qt${QT_VERSION_MAJOR}::DBus
     ${WAYLAND_CLIENT_LIBRARIES}
 )
 
@@ -82,21 +85,8 @@ target_include_directories(stylus-popup PRIVATE
     ${WAYLAND_CLIENT_INCLUDE_DIRS}
 )
 
-if(${QT_VERSION} VERSION_LESS 6.1.0)
-    set(BUNDLE_ID_OPTION MACOSX_BUNDLE_GUI_IDENTIFIER com.example.stylus-popup)
-endif()
-set_target_properties(stylus-popup PROPERTIES
-    ${BUNDLE_ID_OPTION}
-    MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
-    MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
-    MACOSX_BUNDLE TRUE
-    WIN32_EXECUTABLE TRUE
-)
-
 include(GNUInstallDirs)
 install(TARGETS stylus-popup
-    BUNDLE DESTINATION .
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 

@@ -1,6 +1,7 @@
 #include "popupwidget.h"
 
 #include <QPainter>
+#include <QtMath>
 #include <QPainterPath>
 #include <QScreen>
 #include <QGuiApplication>
@@ -42,6 +43,8 @@ static void drawBatteryIcon(QPainter &p, QRect r, int pct, bool charging,
     }
 }
 
+static void drawSpinner(QPainter &p, const QRect &r, int angle, const QColor &color);
+
 static void drawStylusIcon(QPainter &p, QRect r, const QColor &color)
 {
     p.save();
@@ -67,6 +70,7 @@ PopupWidget::PopupWidget(QObject *parent)
     , m_layer(new WaylandLayerSurface(this))
     , m_animTimer(new QTimer(this))
     , m_dismissTimer(new QTimer(this))
+    , m_spinnerTimer(new QTimer(this))
 {
     updateLayoutCache();
 
@@ -91,52 +95,124 @@ PopupWidget::PopupWidget(QObject *parent)
     m_dismissTimer->setInterval(kDismissMs);
     connect(m_dismissTimer, &QTimer::timeout, this, &PopupWidget::slideOut);
 
-    m_titleFont.setPixelSize(15);
+    m_spinnerTimer->setInterval(kSpinnerMs);
+    connect(m_spinnerTimer, &QTimer::timeout, this, &PopupWidget::onSpinnerTick);
+
+    m_titleFont.setPixelSize(14);
     m_titleFont.setWeight(QFont::Medium);
 
     m_subFont = m_titleFont;
-    m_subFont.setPixelSize(13);
+    m_subFont.setPixelSize(12);
     m_subFont.setWeight(QFont::Normal);
 
     m_limitFont = m_subFont;
-    m_limitFont.setPixelSize(10);
+    m_limitFont.setPixelSize(9);
 }
 
 void PopupWidget::updateStatusText()
 {
+    if (!canShowFinal()) {
+        m_statusText = QStringLiteral("Connecting…");
+        m_limitText.clear();
+        return;
+    }
+
     m_statusText = m_state.charging
         ? QStringLiteral("Charging · %1 %").arg(m_state.capacity)
         : QStringLiteral("Connected · %1 %").arg(m_state.capacity);
     m_limitText = QStringLiteral("%1%").arg(m_state.limit);
 }
 
+bool PopupWidget::canShowFinal() const
+{
+    return m_state.attached
+        && m_state.phase == StylusPhase::Complete
+        && m_btConnected;
+}
+
+int PopupWidget::targetHeightForState() const
+{
+    return canShowFinal() ? kHeight : kWaitingHeight;
+}
+
 void PopupWidget::showState(const StylusState &state)
 {
+    const bool wasFinal = canShowFinal();
+
     if (state != m_state) {
         m_state = state;
         m_dirty = true;
-        updateStatusText();
     }
 
     m_dismissTimer->stop();
 
-    if (m_shown) {
-        if (m_dirty)
-            renderFrame();
+    if (!state.attached) {
+        m_btConnected = false;
+        m_spinnerTimer->stop();
+        if (m_shown)
+            slideOut();
+        return;
+    }
+
+    updateStatusText();
+
+    if (state.phase == StylusPhase::Attaching)
+        m_btConnected = false;
+
+    if (!m_shown) {
+        slideIn(targetHeightForState());
+        if (!canShowFinal())
+            m_spinnerTimer->start();
+        return;
+    }
+
+    if (canShowFinal() && !wasFinal) {
+        m_spinnerTimer->stop();
+        transitionToFinal();
+        return;
+    }
+
+    if (m_dirty)
+        renderFrame();
+    if (canShowFinal())
         m_dismissTimer->start();
+}
+
+void PopupWidget::onBtConnected()
+{
+    if (!m_state.attached)
+        return;
+
+    m_btConnected = true;
+    if (canShowFinal())
+        transitionToFinal();
+}
+
+void PopupWidget::onBtConnectionFailed(const QString &error)
+{
+    qWarning("PopupWidget: Bluetooth connection failed: %s", qPrintable(error));
+}
+
+void PopupWidget::transitionToFinal()
+{
+    updateStatusText();
+    m_dirty = true;
+
+    if (m_layer->visibleHeight() < kHeight) {
+        startAnimation(m_layer->visibleHeight(), kHeight, QEasingCurve::OutExpo);
     } else {
-        slideIn();
+        renderFrame();
     }
 }
 
-void PopupWidget::slideIn()
+void PopupWidget::slideIn(int targetHeight)
 {
-    startAnimation(0, m_layer->fullHeight(), QEasingCurve::OutExpo);
-    m_dismissTimer->start();
+    startAnimation(0, targetHeight, QEasingCurve::OutExpo);
 }
 
 void PopupWidget::slideOut()
 {
+    m_spinnerTimer->stop();
     startAnimation(m_layer->visibleHeight(), 0, QEasingCurve::InExpo);
 }
 
@@ -156,7 +232,7 @@ void PopupWidget::onAnimationTick()
     double progress = m_animCurve.valueForProgress(t);
 
     int h = static_cast<int>(m_animStart + (m_animEnd - m_animStart) * progress);
-    
+
     if (h != m_layer->visibleHeight()) {
         m_layer->setVisibleHeight(h);
         renderFrame();
@@ -164,8 +240,20 @@ void PopupWidget::onAnimationTick()
 
     if (t >= 1.0) {
         m_animTimer->stop();
-        if (m_animEnd == 0)
+        if (m_animEnd == 0) {
             m_layer->hide();
+        } else if (m_animEnd == kHeight) {
+            m_dismissTimer->start();
+        }
+    }
+}
+
+void PopupWidget::onSpinnerTick()
+{
+    m_spinnerAngle = (m_spinnerAngle + 10) % 360;
+    if (m_shown && !canShowFinal()) {
+        m_dirty = true;
+        renderFrame();
     }
 }
 
@@ -178,8 +266,15 @@ void PopupWidget::updateLayoutCache()
     const int cardX = (m_screenW - cardW) / 2;
     m_cardRect = QRect(cardX, 4, cardW, kHeight - 8);
 
+    const int waitingTextW = QFontMetrics(m_subFont).horizontalAdvance(QStringLiteral("Connecting…"));
+    const int waitingCardW = qMin(waitingTextW + kSpinnerSize + 3 * kPad, m_screenW - 8);
+    const int waitingCardX = (m_screenW - waitingCardW) / 2;
+    m_waitingCardRect = QRect(waitingCardX, 4, waitingCardW, kWaitingHeight - 8);
+
     m_cardPath = QPainterPath();
     m_cardPath.addRoundedRect(m_cardRect, 16, 16);
+    m_waitingCardPath = QPainterPath();
+    m_waitingCardPath.addRoundedRect(m_waitingCardRect, 16, 16);
     m_borderPen = QPen(QColor(255, 255, 255, 30), 1);
 
     m_iconX = m_cardRect.x() + kPad;
@@ -223,49 +318,96 @@ void PopupWidget::renderFrame()
         const QColor &progressTrack = m_theme.progressTrack();
 
         /* ── Card background ── */
-        p.fillPath(m_cardPath, surface);
+        const QPainterPath &cardPath = canShowFinal() ? m_cardPath : m_waitingCardPath;
+        p.fillPath(cardPath, surface);
         p.setPen(m_borderPen);
-        p.drawPath(m_cardPath);
+        p.drawPath(cardPath);
 
-        /* ── Icon ── */
-        drawStylusIcon(p, QRect(m_iconX, m_iconY, kIconW, kIconH), primary);
+        if (canShowFinal()) {
+            /* ── Icon ── */
+            drawStylusIcon(p, QRect(m_iconX, m_iconY, kIconW, kIconH), primary);
 
-        /* ── Text ── */
-        p.setFont(m_titleFont);
-        p.setPen(onSurface);
-        p.drawText(m_textX, m_titleY, QStringLiteral("Xiaomi Stylus Pen 2"));
+            /* ── Text ── */
+            p.setFont(m_titleFont);
+            p.setPen(onSurface);
+            p.drawText(m_textX, m_titleY, QStringLiteral("Xiaomi Stylus Pen 2"));
 
-        p.setFont(m_subFont);
-        p.setPen(onSurfaceVar);
-        p.drawText(m_textX, m_subY, m_statusText);
-
-        /* ── Battery progress bar ── */
-        p.setPen(Qt::NoPen);
-        p.setBrush(progressTrack);
-        p.drawRoundedRect(m_textX, m_barY, m_barW, kBarH, kBarH/2, kBarH/2);
-
-        int fillW = qMax(kBarH, int(m_barW * m_state.capacity / 100.0));
-        p.setBrush(batteryFillColor(m_state.capacity, m_state.charging, primary));
-        p.drawRoundedRect(m_textX, m_barY, fillW, kBarH, kBarH/2, kBarH/2);
-
-        /* Limit marker */
-        if (m_state.limit > 0 && m_state.limit <= 100) {
-            int lx = m_textX + int(m_barW * m_state.limit / 100.0);
-            p.setBrush(onSurfaceVar);
-            p.drawEllipse(QPoint(lx, m_barY + kBarH/2), 4, 4);
-            p.setFont(m_limitFont);
+            p.setFont(m_subFont);
             p.setPen(onSurfaceVar);
-            p.drawText(lx - 10, m_barY - 4, m_limitText);
-        }
+            p.drawText(m_textX, m_subY, m_statusText);
 
-        /* ── Battery icon (top-right corner of card) ── */
-        drawBatteryIcon(p, QRect(m_batX, m_batY, kBatW, kBatH),
-                       m_state.capacity, m_state.charging,
-                       primary);
+            /* ── Battery progress bar ── */
+            p.setPen(Qt::NoPen);
+            p.setBrush(progressTrack);
+            p.drawRoundedRect(m_textX, m_barY, m_barW, kBarH, kBarH/2, kBarH/2);
+
+            int fillW = qMax(kBarH, int(m_barW * m_state.capacity / 100.0));
+            p.setBrush(batteryFillColor(m_state.capacity, m_state.charging, primary));
+            p.drawRoundedRect(m_textX, m_barY, fillW, kBarH, kBarH/2, kBarH/2);
+
+            /* Limit marker */
+            if (m_state.limit > 0 && m_state.limit <= 100) {
+                int lx = m_textX + int(m_barW * m_state.limit / 100.0);
+                p.setBrush(onSurfaceVar);
+                p.drawEllipse(QPoint(lx, m_barY + kBarH/2), 4, 4);
+                p.setFont(m_limitFont);
+                p.setPen(onSurfaceVar);
+                p.drawText(lx - 10, m_barY - 4, m_limitText);
+            }
+
+            /* ── Battery icon (top-right corner of card) ── */
+            drawBatteryIcon(p, QRect(m_batX, m_batY, kBatW, kBatH),
+                           m_state.capacity, m_state.charging,
+                           primary);
+        } else {
+            /* ── Waiting spinner + text ── */
+            const QRect &wr = m_waitingCardRect;
+            const int spinnerX = wr.x() + kPad;
+            const int spinnerY = wr.y() + (wr.height() - kSpinnerSize) / 2;
+            drawSpinner(p, QRect(spinnerX, spinnerY, kSpinnerSize, kSpinnerSize),
+                        m_spinnerAngle, primary);
+
+            p.setFont(m_subFont);
+            p.setPen(onSurfaceVar);
+            const QFontMetrics fm(m_subFont);
+            const QRect textBounds = fm.tightBoundingRect(m_statusText);
+            const int textX = spinnerX + kSpinnerSize + kPad - textBounds.left();
+            const int textH = fm.ascent() + fm.descent();
+            const int textY = wr.y() + (wr.height() - textH) / 2 + fm.ascent();
+            p.drawText(textX, textY, m_statusText);
+        }
 
         m_dirty = false;
     }
 
     m_layer->updateImage(m_imageBuffer);
     m_layer->commitFrame();
+}
+
+static void drawSpinner(QPainter &p, const QRect &r, int angle, const QColor &color)
+{
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing);
+
+    const QPoint center = r.center();
+    const int trackRadius = r.width() / 2 - 3;
+    const int ballRadius = trackRadius / 2;
+    const int ballOrbitRadius = trackRadius - ballRadius;
+
+    /* Static circular track */
+    QPen trackPen(color.darker(180), 3.0);
+    trackPen.setCapStyle(Qt::RoundCap);
+    p.setPen(trackPen);
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(center, trackRadius, trackRadius);
+
+    /* Solid ball moving along the inner arc of the track */
+    const qreal a = qDegreesToRadians(static_cast<qreal>(angle));
+    const QPoint ballPos(center.x() + static_cast<int>(ballOrbitRadius * qCos(a)),
+                         center.y() + static_cast<int>(ballOrbitRadius * qSin(a)));
+    p.setPen(Qt::NoPen);
+    p.setBrush(color);
+    p.drawEllipse(ballPos, ballRadius, ballRadius);
+
+    p.restore();
 }

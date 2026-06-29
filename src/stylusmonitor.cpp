@@ -3,13 +3,39 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <cerrno>
+#include <cstdint>
 
 struct Idtp9418Event {
     uint8_t soc;
     uint8_t is_charging;
     uint8_t is_attached;
     uint8_t charge_limit;
+    uint8_t pen_mac[6];
+    uint8_t state;
 };
+
+static QString formatMac(const uint8_t mac[6])
+{
+    // The IDTP9418 kernel driver reports MAC bytes in the opposite order
+    // from what BlueZ uses, so reverse them here.
+    return QStringLiteral("%1:%2:%3:%4:%5:%6")
+        .arg(mac[5], 2, 16, QChar('0'))
+        .arg(mac[4], 2, 16, QChar('0'))
+        .arg(mac[3], 2, 16, QChar('0'))
+        .arg(mac[2], 2, 16, QChar('0'))
+        .arg(mac[1], 2, 16, QChar('0'))
+        .arg(mac[0], 2, 16, QChar('0'))
+        .toUpper();
+}
+
+static bool isMacNonZero(const uint8_t mac[6])
+{
+    for (int i = 0; i < 6; ++i) {
+        if (mac[i] != 0)
+            return true;
+    }
+    return false;
+}
 
 static bool readState(int fd, StylusState *out)
 {
@@ -26,7 +52,12 @@ static bool readState(int fd, StylusState *out)
         evt.is_attached != 0,
         evt.is_charging != 0,
         qMin(static_cast<int>(evt.soc), 100),
-        static_cast<int>(evt.charge_limit)
+        static_cast<int>(evt.charge_limit),
+        formatMac(evt.pen_mac),
+        isMacNonZero(evt.pen_mac),
+        evt.state == static_cast<uint8_t>(StylusPhase::Attaching)
+            ? StylusPhase::Attaching
+            : StylusPhase::Complete
     };
     return true;
 }
@@ -58,8 +89,6 @@ void StylusMonitor::run()
     while (m_running.load(std::memory_order_acquire)) {
         StylusState cur;
         if (!readState(fd, &cur))
-            break;
-        if (!cur.attached)
             break;
         emit stateChanged(cur);
     }

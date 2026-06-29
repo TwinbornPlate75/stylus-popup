@@ -2,6 +2,7 @@
 
 #include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QSettings>
 
 static QColor parseRgb(const QStringList &parts, const QColor &fallback)
@@ -24,11 +25,12 @@ ColorTheme::ColorTheme()
 bool ColorTheme::loadFromQt6ct()
 {
     const QString path = QDir::home().filePath(".config/qt6ct/colors/matugen.conf");
-    QSettings s(path, QSettings::IniFormat);
-    if (s.status() != QSettings::NoError) {
-        qWarning("colortheme: cannot open qt6ct config: %s", qPrintable(path));
+    if (!QFile::exists(path)) {
+        qWarning("colortheme: qt6ct config not found: %s", qPrintable(path));
         return false;
     }
+
+    QSettings s(path, QSettings::IniFormat);
 
     auto get = [&](const QString &key, const QColor &def) {
         /* QSettings IniFormat auto-splits comma-separated values into QStringList */
