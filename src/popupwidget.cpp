@@ -8,6 +8,17 @@
 
 static void drawSpinner(QPainter &p, const QRect &r, int angle, const QColor &color);
 
+static QString stylusNameForMac(const QString &mac, bool macValid)
+{
+    // Xiaomi's second-generation stylus reports a fixed MAC address.
+    // All other pens from the same era use the same hardware/firmware and
+    // are treated as the first generation.
+    static const QString kGen2Mac = QStringLiteral("E6:FB:D0:E1:5A:04");
+    if (macValid && mac.compare(kGen2Mac, Qt::CaseInsensitive) == 0)
+        return QStringLiteral("Xiaomi Stylus Pen 2");
+    return QStringLiteral("Xiaomi Stylus Pen 1");
+}
+
 static void drawBatteryGlyph(QPainter &p, const QRect &r, int pct, bool charging,
                               const QColor &primary, const QColor &track,
                               const QColor &onSurface, const QColor &chargingColor,
@@ -326,10 +337,11 @@ void PopupWidget::drawFinalContent(QPainter &p)
     p.setFont(m_titleFont);
     p.setPen(onSurface);
     const QFontMetrics fmTitle(m_titleFont);
-    const QRect titleTb = fmTitle.tightBoundingRect(QStringLiteral("Xiaomi Stylus Pen 2"));
+    const QString titleText = stylusNameForMac(m_state.macAddress, m_state.macValid);
+    const QRect titleTb = fmTitle.tightBoundingRect(titleText);
     const int titleX = m_textRect.center().x() - titleTb.width() / 2 - titleTb.left();
     const int titleY = m_textRect.center().y() + (fmTitle.ascent() - fmTitle.descent()) / 2;
-    p.drawText(titleX, titleY, QStringLiteral("Xiaomi Stylus Pen 2"));
+    p.drawText(titleX, titleY, titleText);
 
     if (m_state.limit > 0 && m_state.limit <= 100)
         drawLimitBadge(p);
