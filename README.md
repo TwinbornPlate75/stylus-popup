@@ -1,8 +1,19 @@
 # stylus-popup
 
-A Material Design 3 stylus popup notification for the Xiaomi Pad 5, 
-displaying battery level, charging status, and attachment state on 
-Wayland. It needs modified IDTP9418 driver to receive stylus status.
+A Material Design 3 stylus popup notification for the Xiaomi Pad 5,
+running on Wayland. It listens to a modified IDTP9418 kernel driver for
+stylus status and shows a floating capsule with battery level, charging
+state, and generation-specific model name.
+
+## Features
+
+- Floating capsule popup anchored to the top of the screen
+- Circular battery glyph with charging glow and low-battery color
+- "Connecting…" spinner while the stylus is attaching
+- Automatic Bluetooth pairing via BlueZ once the pen attaches
+- Charge limit badge (`LIMIT %`)
+- Auto-detected stylus generation: shown as **Xiaomi Stylus Pen 2** when
+the MAC address matches `E6:FB:D0:E1:5A:04`, otherwise **Xiaomi Stylus Pen 1**
 
 ## Build
 
@@ -45,6 +56,12 @@ tarball from the current commit, and produce a binary RPM in one step:
 Use `./packaging/build-rpm.sh --srpm` to also
 emit a source RPM, or `./packaging/build-rpm.sh clean` to wipe the
 `~/rpmbuild` tree and `build/` between runs.
+
+## Runtime requirements
+
+- Wayland compositor
+- Modified IDTP9418 driver exposing `/dev/idtp9418`
+- D-Bus system bus and BlueZ for automatic stylus pairing
 
 ## Layout
 
