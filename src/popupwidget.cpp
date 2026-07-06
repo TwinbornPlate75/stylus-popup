@@ -6,7 +6,7 @@
 #include <QScreen>
 #include <QGuiApplication>
 
-static void drawSpinner(QPainter &p, const QRect &r, int angle, const QColor &color);
+static void drawSpinner(QPainter &p, const QRect &r, int angle, const QColor &color, qreal phase = 0.0);
 
 static QString stylusNameForMac(const QString &mac, bool macValid)
 {
@@ -30,7 +30,7 @@ static void drawBatteryGlyph(QPainter &p, const QRect &r, int pct, bool charging
     const QPoint center = r.center();
     const int outerRadius = r.width() / 2 - 2;
     const int ringRadius = outerRadius - 4;
-    const int penW = 5;
+    const qreal penW = 5.0; 
 
     /* Outer glow when charging */
     if (charging) {
@@ -282,7 +282,7 @@ void PopupWidget::onAnimationTick()
 
 void PopupWidget::onSpinnerTick()
 {
-    m_spinnerAngle = (m_spinnerAngle + 15) % 360;
+    m_spinnerAngle = (m_spinnerAngle + 10) % 360;
     m_pulsePhase += 0.04;
     if (m_pulsePhase > 1.0)
         m_pulsePhase -= 1.0;
@@ -305,19 +305,19 @@ void PopupWidget::updateLayoutCache()
     const int chipX = (m_screenW - kWaitingWidth) / 2;
     m_waitingChipRect = QRect(chipX, kCapsuleTopMargin, kWaitingWidth, kWaitingHeight);
 
-    m_glyphRect = QRect(m_capsuleRect.x() + kPad,
+    m_glyphRect = QRect(m_capsuleRect.x() + kSpinnerTextGap,
                         m_capsuleRect.y() + (m_capsuleRect.height() - kBatteryGlyphSize) / 2,
                         kBatteryGlyphSize, kBatteryGlyphSize);
 
     const int limitW = 38;
     const int limitH = 34;
-    m_limitRect = QRect(m_capsuleRect.right() - kPad - limitW,
+    m_limitRect = QRect(m_capsuleRect.right() - kSpinnerTextGap - limitW,
                         m_capsuleRect.y() + (m_capsuleRect.height() - limitH) / 2,
                         limitW, limitH);
 
-    m_textRect = QRect(m_glyphRect.right() + kPad,
+    m_textRect = QRect(m_glyphRect.right() + kSpinnerTextGap,
                        m_capsuleRect.y(),
-                       m_limitRect.left() - m_glyphRect.right() - 2 * kPad,
+                       m_limitRect.left() - m_glyphRect.right() - 2 * kSpinnerTextGap,
                        m_capsuleRect.height());
 }
 
@@ -443,10 +443,10 @@ void PopupWidget::renderFrame()
             if (waitingAlpha > 0.0) {
                 p.save();
                 p.setOpacity(waitingAlpha);
-                const int spinnerX = curRect.x() + kPad;
+                                const int spinnerX = curRect.x() + kSpinnerTextGap;
                 const int spinnerY = curRect.y() + (curRect.height() - kSpinnerSize) / 2;
                 drawSpinner(p, QRect(spinnerX, spinnerY, kSpinnerSize, kSpinnerSize),
-                            m_spinnerAngle, primary);
+                            m_spinnerAngle, primary, m_pulsePhase);
                 p.restore();
             }
 
@@ -466,16 +466,16 @@ void PopupWidget::renderFrame()
             /* ── Waiting chip ── */
             drawCapsuleBackground(p, m_waitingChipRect, kWaitingHeight / 2.0, surface, border);
 
-            const int spinnerX = m_waitingChipRect.x() + kPad;
+            const int spinnerX = m_waitingChipRect.x() + kSpinnerTextGap;
             const int spinnerY = m_waitingChipRect.y() + (m_waitingChipRect.height() - kSpinnerSize) / 2;
             drawSpinner(p, QRect(spinnerX, spinnerY, kSpinnerSize, kSpinnerSize),
-                        m_spinnerAngle, primary);
+                        m_spinnerAngle, primary, m_pulsePhase);
 
             p.setFont(m_subFont);
             p.setPen(onSurfaceVar);
             const QFontMetrics fm(m_subFont);
             const QRect textBounds = fm.tightBoundingRect(QStringLiteral("Connecting…"));
-            const int textX = spinnerX + kSpinnerSize + kPad - textBounds.left();
+            const int textX = spinnerX + kSpinnerSize + kSpinnerTextGap - textBounds.left();
             const int textY = m_waitingChipRect.y() + (m_waitingChipRect.height() + fm.ascent() - fm.descent()) / 2;
             p.drawText(textX, textY, QStringLiteral("Connecting…"));
         }
@@ -487,30 +487,38 @@ void PopupWidget::renderFrame()
     m_layer->commitFrame();
 }
 
-static void drawSpinner(QPainter &p, const QRect &r, int angle, const QColor &color)
+static void drawSpinner(QPainter &p, const QRect &r, int angle, const QColor &color, qreal phase)
 {
+    Q_UNUSED(phase)
+
     p.save();
     p.setRenderHint(QPainter::Antialiasing);
 
     const QPoint center = r.center();
-    const int trackRadius = r.width() / 2 - 3;
-    const int ballRadius = trackRadius / 2;
-    const int ballOrbitRadius = trackRadius - ballRadius;
+    const int radius = r.width() / 2 - 3;
+    const qreal penW = 2.5;
 
-    /* Static circular track */
-    QPen trackPen(color.darker(180), 3.0);
+    /* MD3-style flat track ring */
+    QColor trackColor = color;
+    trackColor.setAlphaF(0.12);
+    QPen trackPen(trackColor, penW);
     trackPen.setCapStyle(Qt::RoundCap);
     p.setPen(trackPen);
     p.setBrush(Qt::NoBrush);
-    p.drawEllipse(center, trackRadius, trackRadius);
+    p.drawEllipse(center, radius, radius);
 
-    /* Solid ball moving along the inner arc of the track */
-    const qreal a = qDegreesToRadians(static_cast<qreal>(angle));
-    const QPoint ballPos(center.x() + static_cast<int>(ballOrbitRadius * qCos(a)),
-                         center.y() + static_cast<int>(ballOrbitRadius * qSin(a)));
-    p.setPen(Qt::NoPen);
-    p.setBrush(color);
-    p.drawEllipse(ballPos, ballRadius, ballRadius);
+    /* MD3 indeterminate arc: fixed sweep, smooth rotation */
+    const int span = 90 * 16;
+
+    const int startAngle = (90 - angle) * 16;
+
+    QPen arcPen(color, penW);
+    arcPen.setCapStyle(Qt::RoundCap);
+    p.setPen(arcPen);
+    p.setBrush(Qt::NoBrush);
+    p.drawArc(center.x() - radius, center.y() - radius,
+              radius * 2, radius * 2,
+              startAngle, -span);
 
     p.restore();
 }

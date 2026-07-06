@@ -47,10 +47,10 @@ private:
     static constexpr int kWaitingWidth    = 132;
     static constexpr int kWaitingHeight   = 38;
     static constexpr int kBatteryGlyphSize= 44;
-    static constexpr int kPad             = 14;
     static constexpr int kAnimMs          = 280;
     static constexpr int kDismissMs       = 4000;
-    static constexpr int kSpinnerSize     = 16;
+    static constexpr int kSpinnerSize     = 22;
+    static constexpr int kSpinnerTextGap  = 8;
     static constexpr int kSpinnerMs       = 16;
 
     ColorTheme          m_theme;
