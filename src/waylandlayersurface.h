@@ -53,8 +53,6 @@ public:
     /* Animated property: surface height shown on screen (0 = hidden) */
     void setVisibleHeight(int h) { m_visibleHeight = h; }
     int  visibleHeight() const { return m_visibleHeight; }
-
-    int  fullHeight() const { return m_height; }
     int  scale()      const { return m_scale; }   /* device pixel ratio */
     bool isReady()    const { return m_configured; }
 

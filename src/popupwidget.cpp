@@ -6,7 +6,7 @@
 #include <QScreen>
 #include <QGuiApplication>
 
-static void drawSpinner(QPainter &p, const QRect &r, int angle, const QColor &color, qreal phase = 0.0);
+static void drawSpinner(QPainter &p, const QRect &r, int angle, const QColor &color);
 
 static QString stylusNameForMac(const QString &mac, bool macValid)
 {
@@ -19,18 +19,22 @@ static QString stylusNameForMac(const QString &mac, bool macValid)
     return QStringLiteral("Xiaomi Stylus Pen 1");
 }
 
-static void drawBatteryGlyph(QPainter &p, const QRect &r, int pct, bool charging,
-                              const QColor &primary, const QColor &track,
-                              const QColor &onSurface, const QColor &chargingColor,
-                              const QColor &lowBattery, qreal pulsePhase)
+static void drawBatteryGlyph(QPainter &p, const QRect &r, const ColorTheme &theme,
+                              int pct, bool charging, qreal pulsePhase)
 {
+    const QColor &primary       = theme.primary();
+    const QColor &track         = theme.progressTrack();
+    const QColor &onSurface     = theme.onSurface();
+    const QColor &chargingColor = theme.charging();
+    const QColor &lowBattery    = theme.lowBattery();
+
     p.save();
     p.setRenderHint(QPainter::Antialiasing);
 
     const QPoint center = r.center();
     const int outerRadius = r.width() / 2 - 2;
     const int ringRadius = outerRadius - 4;
-    const qreal penW = 5.0; 
+    const qreal penW = 5.0;
 
     /* Outer glow when charging */
     if (charging) {
@@ -162,14 +166,6 @@ void PopupWidget::showState(const StylusState &state)
     }
 
     m_dismissTimer->stop();
-
-    if (!state.attached) {
-        m_btConnected = false;
-        m_spinnerTimer->stop();
-        if (m_shown)
-            slideOut();
-        return;
-    }
 
     if (!state.attached) {
         m_btConnected = false;
@@ -323,19 +319,11 @@ void PopupWidget::updateLayoutCache()
 
 void PopupWidget::drawFinalContent(QPainter &p)
 {
-    const QColor &primary       = m_theme.primary();
-    const QColor &progressTrack = m_theme.progressTrack();
-    const QColor &onSurface     = m_theme.onSurface();
-    const QColor &chargingColor = m_theme.charging();
-    const QColor &lowBattery    = m_theme.lowBattery();
-
-    drawBatteryGlyph(p, m_glyphRect,
-                     m_state.capacity, m_state.charging,
-                     primary, progressTrack, onSurface, chargingColor,
-                     lowBattery, m_pulsePhase);
+    drawBatteryGlyph(p, m_glyphRect, m_theme,
+                     m_state.capacity, m_state.charging, m_pulsePhase);
 
     p.setFont(m_titleFont);
-    p.setPen(onSurface);
+    p.setPen(m_theme.onSurface());
     const QFontMetrics fmTitle(m_titleFont);
     const QString titleText = stylusNameForMac(m_state.macAddress, m_state.macValid);
     const QRect titleTb = fmTitle.tightBoundingRect(titleText);
@@ -446,7 +434,7 @@ void PopupWidget::renderFrame()
                                 const int spinnerX = curRect.x() + kSpinnerTextGap;
                 const int spinnerY = curRect.y() + (curRect.height() - kSpinnerSize) / 2;
                 drawSpinner(p, QRect(spinnerX, spinnerY, kSpinnerSize, kSpinnerSize),
-                            m_spinnerAngle, primary, m_pulsePhase);
+                            m_spinnerAngle, primary);
                 p.restore();
             }
 
@@ -469,7 +457,7 @@ void PopupWidget::renderFrame()
             const int spinnerX = m_waitingChipRect.x() + kSpinnerTextGap;
             const int spinnerY = m_waitingChipRect.y() + (m_waitingChipRect.height() - kSpinnerSize) / 2;
             drawSpinner(p, QRect(spinnerX, spinnerY, kSpinnerSize, kSpinnerSize),
-                        m_spinnerAngle, primary, m_pulsePhase);
+                        m_spinnerAngle, primary);
 
             p.setFont(m_subFont);
             p.setPen(onSurfaceVar);
@@ -487,10 +475,8 @@ void PopupWidget::renderFrame()
     m_layer->commitFrame();
 }
 
-static void drawSpinner(QPainter &p, const QRect &r, int angle, const QColor &color, qreal phase)
+static void drawSpinner(QPainter &p, const QRect &r, int angle, const QColor &color)
 {
-    Q_UNUSED(phase)
-
     p.save();
     p.setRenderHint(QPainter::Antialiasing);
 

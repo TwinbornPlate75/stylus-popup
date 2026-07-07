@@ -64,11 +64,7 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         ${PROJECT_SOURCES}
     )
 else()
-    if(ANDROID)
-        add_library(stylus-popup SHARED ${PROJECT_SOURCES})
-    else()
-        add_executable(stylus-popup ${PROJECT_SOURCES})
-    endif()
+    add_executable(stylus-popup ${PROJECT_SOURCES})
 endif()
 
 # Generated headers are in the build dir
