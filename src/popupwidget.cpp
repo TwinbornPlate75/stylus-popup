@@ -1,7 +1,6 @@
 #include "popupwidget.h"
 
 #include <QPainter>
-#include <QtMath>
 #include <QPainterPath>
 #include <QScreen>
 #include <QGuiApplication>
@@ -20,7 +19,7 @@ static QString stylusNameForMac(const QString &mac, bool macValid)
 }
 
 static void drawBatteryGlyph(QPainter &p, const QRect &r, const ColorTheme &theme,
-                              int pct, bool charging, qreal pulsePhase)
+                              int pct, bool charging)
 {
     const QColor &primary       = theme.primary();
     const QColor &track         = theme.progressTrack();
@@ -35,16 +34,6 @@ static void drawBatteryGlyph(QPainter &p, const QRect &r, const ColorTheme &them
     const int outerRadius = r.width() / 2 - 2;
     const int ringRadius = outerRadius - 4;
     const qreal penW = 5.0;
-
-    /* Outer glow when charging */
-    if (charging) {
-        const qreal glow = 0.35 + 0.25 * qSin(pulsePhase * M_PI * 2);
-        QColor glowColor = chargingColor;
-        glowColor.setAlphaF(glow);
-        p.setPen(Qt::NoPen);
-        p.setBrush(glowColor);
-        p.drawEllipse(center, outerRadius + 4, outerRadius + 4);
-    }
 
     /* Track ring */
     QPen trackPen(track, penW);
@@ -279,11 +268,8 @@ void PopupWidget::onAnimationTick()
 void PopupWidget::onSpinnerTick()
 {
     m_spinnerAngle = (m_spinnerAngle + 10) % 360;
-    m_pulsePhase += 0.04;
-    if (m_pulsePhase > 1.0)
-        m_pulsePhase -= 1.0;
 
-    if (m_shown && (!canShowFinal() || m_state.charging)) {
+    if (m_shown && !canShowFinal()) {
         m_dirty = true;
         renderFrame();
     }
@@ -320,7 +306,7 @@ void PopupWidget::updateLayoutCache()
 void PopupWidget::drawFinalContent(QPainter &p)
 {
     drawBatteryGlyph(p, m_glyphRect, m_theme,
-                     m_state.capacity, m_state.charging, m_pulsePhase);
+                     m_state.capacity, m_state.charging);
 
     p.setFont(m_titleFont);
     p.setPen(m_theme.onSurface());
@@ -333,6 +319,13 @@ void PopupWidget::drawFinalContent(QPainter &p)
 
     if (m_state.limit > 0 && m_state.limit <= 100)
         drawLimitBadge(p);
+}
+
+QRect PopupWidget::spinnerRectFor(const QRect &container) const
+{
+    return QRect(container.x() + kSpinnerTextGap,
+                 container.y() + (container.height() - kSpinnerSize) / 2,
+                 kSpinnerSize, kSpinnerSize);
 }
 
 void PopupWidget::drawLimitBadge(QPainter &p)
@@ -431,10 +424,7 @@ void PopupWidget::renderFrame()
             if (waitingAlpha > 0.0) {
                 p.save();
                 p.setOpacity(waitingAlpha);
-                                const int spinnerX = curRect.x() + kSpinnerTextGap;
-                const int spinnerY = curRect.y() + (curRect.height() - kSpinnerSize) / 2;
-                drawSpinner(p, QRect(spinnerX, spinnerY, kSpinnerSize, kSpinnerSize),
-                            m_spinnerAngle, primary);
+                drawSpinner(p, spinnerRectFor(curRect), m_spinnerAngle, primary);
                 p.restore();
             }
 
@@ -454,16 +444,14 @@ void PopupWidget::renderFrame()
             /* ── Waiting chip ── */
             drawCapsuleBackground(p, m_waitingChipRect, kWaitingHeight / 2.0, surface, border);
 
-            const int spinnerX = m_waitingChipRect.x() + kSpinnerTextGap;
-            const int spinnerY = m_waitingChipRect.y() + (m_waitingChipRect.height() - kSpinnerSize) / 2;
-            drawSpinner(p, QRect(spinnerX, spinnerY, kSpinnerSize, kSpinnerSize),
-                        m_spinnerAngle, primary);
+            const QRect spinnerRect = spinnerRectFor(m_waitingChipRect);
+            drawSpinner(p, spinnerRect, m_spinnerAngle, primary);
 
             p.setFont(m_subFont);
             p.setPen(onSurfaceVar);
             const QFontMetrics fm(m_subFont);
             const QRect textBounds = fm.tightBoundingRect(QStringLiteral("Connecting…"));
-            const int textX = spinnerX + kSpinnerSize + kSpinnerTextGap - textBounds.left();
+            const int textX = spinnerRect.x() + kSpinnerSize + kSpinnerTextGap - textBounds.left();
             const int textY = m_waitingChipRect.y() + (m_waitingChipRect.height() + fm.ascent() - fm.descent()) / 2;
             p.drawText(textX, textY, QStringLiteral("Connecting…"));
         }

@@ -39,6 +39,7 @@ private:
     bool canShowFinal() const;
     void drawFinalContent(QPainter &p);
     void drawLimitBadge(QPainter &p);
+    QRect spinnerRectFor(const QRect &container) const;
 
     static constexpr int kSurfaceHeight   = 110;
     static constexpr int kCapsuleWidth    = 260;
@@ -66,7 +67,6 @@ private:
     int                  m_spinnerAngle = 0;
     bool                 m_morphing = false;
     qreal                m_morphProgress = 0.0;
-    qreal                m_pulsePhase = 0.0;
 
     int m_animStart = 0;
     int m_animEnd   = 0;
