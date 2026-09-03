@@ -4,7 +4,7 @@ After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
-ExecStart=/usr/bin/stylus-popup
+ExecStart=stylus-popup
 Restart=on-failure
 Environment=QT_QPA_PLATFORM=wayland
 
