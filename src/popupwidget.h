@@ -8,6 +8,7 @@
 #include <QRect>
 #include <QFont>
 
+class QFileSystemWatcher;
 class QPainter;
 
 #include "colortheme.h"
@@ -34,6 +35,7 @@ private:
     void renderFrame();
     void onAnimationTick();
     void onSpinnerTick();
+    void onThemeFileChanged();
     void updateLayoutCache();
     int  targetHeightForState() const;
     bool canShowFinal() const;
@@ -55,6 +57,7 @@ private:
     static constexpr int kSpinnerMs       = 16;
 
     ColorTheme          m_theme;
+    QFileSystemWatcher  *m_themeWatcher;
     WaylandLayerSurface *m_layer;
     QTimer              *m_animTimer;
     QTimer              *m_dismissTimer;

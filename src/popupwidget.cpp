@@ -1,9 +1,12 @@
 #include "popupwidget.h"
 
+#include <QDir>
+#include <QFile>
+#include <QFileSystemWatcher>
+#include <QGuiApplication>
 #include <QPainter>
 #include <QPainterPath>
 #include <QScreen>
-#include <QGuiApplication>
 
 static void drawSpinner(QPainter &p, const QRect &r, int angle, const QColor &color);
 
@@ -110,6 +113,23 @@ PopupWidget::PopupWidget(QObject *parent)
 
     if (!m_theme.loadFromQt6ct())
         qWarning("stylus-popup: using fallback theme colors");
+
+    m_themeWatcher = new QFileSystemWatcher(this);
+    connect(m_themeWatcher, &QFileSystemWatcher::fileChanged,
+            this, &PopupWidget::onThemeFileChanged);
+    connect(m_themeWatcher, &QFileSystemWatcher::directoryChanged,
+            this, &PopupWidget::onThemeFileChanged);
+
+    /* Watch the active config file and its directory. The directory watch also
+     * catches the config appearing later (e.g. DMS only generates it once it
+     * detects qt6ct), and matugen's atomic rewrite of the file. */
+    const QString cfgDir = QDir::homePath() + "/.config/qt6ct/colors";
+    const QString cfgFile = cfgDir + "/matugen.conf";
+    if (QDir().mkpath(cfgDir)) {
+        m_themeWatcher->addPath(cfgDir);
+        if (QFile::exists(cfgFile))
+            m_themeWatcher->addPath(cfgFile);
+    }
 
     QScreen *scr = QGuiApplication::primaryScreen();
     double refreshRate = scr ? scr->refreshRate() : 60.0;
@@ -461,6 +481,23 @@ void PopupWidget::renderFrame()
 
     m_layer->updateImage(m_imageBuffer);
     m_layer->commitFrame();
+}
+
+void PopupWidget::onThemeFileChanged()
+{
+    /* Re-arm the file watch: matugen replaces the file atomically, which
+     * drops the watch on the path; the directory watch still fires on the
+     * rename and on later creation of the config. */
+    const QString cfgFile = QDir::homePath() + "/.config/qt6ct/colors/matugen.conf";
+    if (QFile::exists(cfgFile))
+        m_themeWatcher->addPath(cfgFile);
+
+    if (m_theme.loadFromQt6ct()) {
+        m_dirty = true;
+        renderFrame();
+    } else {
+        qWarning("stylus-popup: theme reload failed, keeping previous colors");
+    }
 }
 
 static void drawSpinner(QPainter &p, const QRect &r, int angle, const QColor &color)

@@ -1,11 +1,15 @@
 #pragma once
 
 #include <QColor>
+#include <QObject>
+#include <QStringList>
 
-class ColorTheme
+class ColorTheme : public QObject
 {
+    Q_OBJECT
+
 public:
-    ColorTheme();
+    explicit ColorTheme(QObject *parent = nullptr);
 
     bool loadFromQt6ct();
 
@@ -17,7 +21,13 @@ public:
     const QColor &lowBattery()       const { return m_lowBattery; }
     const QColor &charging()         const { return m_charging; }
 
+    const QString &configPath() const { return m_path; }
+
 private:
+    QStringList candidatePaths() const;
+    void loadFrom(const QString &path);
+
+    QString m_path;
     QColor m_surface;
     QColor m_onSurface;
     QColor m_onSurfaceVariant;

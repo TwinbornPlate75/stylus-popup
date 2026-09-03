@@ -13,8 +13,9 @@ static QColor parseRgb(const QStringList &parts, const QColor &fallback)
     return c.isValid() ? c : fallback;
 }
 
-ColorTheme::ColorTheme()
-    : m_surface("#211F26")
+ColorTheme::ColorTheme(QObject *parent)
+    : QObject(parent)
+    , m_surface("#211F26")
     , m_onSurface("#E6E1E5")
     , m_onSurfaceVariant("#CAC4D0")
     , m_primary("#D0BCFF")
@@ -24,14 +25,51 @@ ColorTheme::ColorTheme()
 {
 }
 
+QStringList ColorTheme::candidatePaths() const
+{
+    QStringList paths;
+    paths << QDir::home().filePath(".config/qt6ct/colors/matugen.conf");
+
+    /* Qt5 fallback: qt5ct uses the same key layout as qt6ct. */
+    paths << QDir::home().filePath(".config/qt5ct/colors/matugen.conf");
+
+    /* Quickshell DMS matugen template. */
+    paths << QDir::home().filePath(".local/share/color-schemes/matugen.conf");
+
+    return paths;
+}
+
 bool ColorTheme::loadFromQt6ct()
 {
-    const QString path = QDir::home().filePath(".config/qt6ct/colors/matugen.conf");
-    if (!QFile::exists(path)) {
-        qWarning("colortheme: qt6ct config not found: %s", qPrintable(path));
-        return false;
+    const QStringList paths = candidatePaths();
+
+    for (const QString &path : paths) {
+        if (!QFile::exists(path))
+            continue;
+
+        QSettings s(path, QSettings::IniFormat);
+
+        if (s.status() != QSettings::NoError
+            || s.value("Colors:Window/BackgroundNormal").toStringList().size() != 3) {
+            qWarning("colortheme: config not in expected format: %s", qPrintable(path));
+            continue;
+        }
+
+        loadFrom(path);
+        m_path = path;
+        qDebug("colortheme: loaded — surface=%s primary=%s (from %s)",
+               qPrintable(m_surface.name()), qPrintable(m_primary.name()),
+               qPrintable(path));
+        return true;
     }
 
+    qWarning("colortheme: no matugen color config found; using fallback theme colors");
+    m_path.clear();
+    return false;
+}
+
+void ColorTheme::loadFrom(const QString &path)
+{
     QSettings s(path, QSettings::IniFormat);
 
     auto get = [&](const QString &key, const QColor &def) {
@@ -46,8 +84,4 @@ bool ColorTheme::loadFromQt6ct()
     m_progressTrack    = get("Colors:View/BackgroundAlternate",   m_progressTrack);
     m_lowBattery       = get("Colors:Button/BackgroundNegative",  m_lowBattery);
     m_charging         = get("Colors:Button/BackgroundPositive",  m_charging);
-
-    qDebug("colortheme: loaded — surface=%s primary=%s",
-           qPrintable(m_surface.name()), qPrintable(m_primary.name()));
-    return true;
 }
