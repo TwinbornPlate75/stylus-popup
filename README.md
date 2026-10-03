@@ -14,6 +14,8 @@ state, and generation-specific model name.
 - Charge limit badge (`LIMIT %`)
 - Auto-detected stylus generation: shown as **Xiaomi Stylus Pen 2** when
 the MAC address matches `E6:FB:D0:E1:5A:04`, otherwise **Xiaomi Stylus Pen 1**
+- The pen's two side buttons are intercepted and mapped to shell commands
+(see [Stylus buttons](#stylus-buttons))
 
 ## Build
 
@@ -62,6 +64,73 @@ emit a source RPM, or `./packaging/build-rpm.sh clean` to wipe the
 - Wayland compositor
 - Modified IDTP9418 driver exposing `/dev/idtp9418`
 - D-Bus system bus and BlueZ for automatic stylus pairing
+- Read access to `/dev/input/event*`, i.e. membership of the `input` group -
+  required by the stylus button mapping:
+
+  ```sh
+  sudo usermod -aG input "$USER"   # then log out and back in
+  ```
+
+## Stylus buttons
+
+The pen's two side buttons arrive over Bluetooth HID as ordinary keyboard keys
+(`PAGE_UP` and `PAGE_DOWN`). stylus-popup grabs the matching input node so the
+key stroke no longer reaches the focused window, and runs a shell command
+instead.
+
+The mapping lives in `~/.config/stylus-popup/config.ini`, which is created with
+these defaults on first run:
+
+```ini
+[buttons]
+enabled=true
+grab=true
+repeat=false
+
+page-up=niri msg action focus-workspace-up
+page-down=niri msg action focus-workspace-down
+```
+
+| Key | Meaning |
+| --- | --- |
+| `enabled` | Master switch; `false` leaves the buttons untouched |
+| `grab` | Grab the node exclusively, swallowing the key stroke. `false` runs the command but lets the key through as well |
+| `repeat` | Also fire the command on key auto-repeat while a button is held |
+| `page-up`, `page-down` | Shell command run for that button; empty disables it |
+
+Commands are passed to `/bin/sh -c`, with `STYLUS_BUTTON` exported as `page-up`
+or `page-down`, so one command can serve both buttons:
+
+```ini
+page-up=/home/me/bin/pen.sh
+page-down=/home/me/bin/pen.sh
+```
+
+```sh
+# ~/bin/pen.sh
+case "$STYLUS_BUTTON" in
+    page-up)   niri msg action focus-workspace-up ;;
+    page-down) niri msg action focus-workspace-down ;;
+esac
+```
+
+The pen is recognised by its evdev device name, which is hardcoded: stylus-popup
+only supports the Xiaomi Stylus Pen 1st and 2nd gen, and both advertise the same
+Bluetooth name `Xiaomi Smart Pen`. The kernel derives two node names from it -
+`Xiaomi Smart Pen Keyboard`, which carries the side buttons, and
+`Xiaomi Smart Pen`, the pen's absolute-position-only node. A node is grabbed
+when its name is one of those *and* it exposes `PAGE_UP` or `PAGE_DOWN`: the
+capability half keeps the pen's second node out, and the exact name keeps the
+i2c digitizer (`NVTCapacitivePen`) and ordinary keyboards out. To see which
+nodes are candidates, which one would be grabbed, and whether the `input`
+group is in the way:
+
+```sh
+stylus-popup --list-input   # prints every input node and what would be grabbed
+```
+
+Set `STYLUS_POPUP_CONFIG` to point at a different config file, which is handy
+for trying a mapping out before making it permanent.
 
 ## Layout
 

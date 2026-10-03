@@ -54,6 +54,8 @@ set(PROJECT_SOURCES
     src/colortheme.cpp
     src/bluezmanager.h
     src/bluezmanager.cpp
+    src/stylusbuttons.h
+    src/stylusbuttons.cpp
     ${PROTOCOL_HEADER}
     ${PROTOCOL_SRC}
 )

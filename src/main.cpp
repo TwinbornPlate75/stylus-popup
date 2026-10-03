@@ -2,17 +2,28 @@
 
 #include "bluezmanager.h"
 #include "popupwidget.h"
+#include "stylusbuttons.h"
 #include "stylusmonitor.h"
 
 int main(int argc, char *argv[])
 {
+    /* Diagnostic that needs neither a Wayland session nor the popup: report
+     * which input nodes the pen button mapping would grab. */
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--list-input") == 0) {
+            StylusButtonMonitor::printMatchingDevices(ButtonMapConfig::load());
+            return 0;
+        }
+    }
+
     QApplication app(argc, argv);
     app.setApplicationName("stylus-popup");
     app.setQuitOnLastWindowClosed(false); // keep running even with no visible window
 
-    PopupWidget   popup;
-    BluezManager  bluez;
-    StylusMonitor monitor;
+    PopupWidget       popup;
+    BluezManager      bluez;
+    StylusMonitor     monitor;
+    StylusButtonMapper buttons;
 
     bool pairingRequested = false;
 
@@ -40,6 +51,7 @@ int main(int argc, char *argv[])
                      &popup, &PopupWidget::onBtConnectionFailed,
                      Qt::QueuedConnection);
 
+    buttons.start();
     monitor.start();
     return app.exec();
 }
