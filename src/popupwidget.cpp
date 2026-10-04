@@ -176,13 +176,6 @@ void PopupWidget::showState(const StylusState &state)
 {
     const bool wasFinal = canShowFinal();
 
-    /* A changed stage - the pen appearing, or the driver moving on from
-     * "attaching" - is a fresh chance to connect, so a wait that was given up
-     * on earlier may start over. Everything else is chatter from an unchanged
-     * pen and must not resurrect the popup. */
-    const bool stageChanged = state.attached != m_state.attached
-                           || state.phase != m_state.phase;
-
     if (state != m_state) {
         m_state = state;
         m_dirty = true;
@@ -196,11 +189,18 @@ void PopupWidget::showState(const StylusState &state)
         return;
     }
 
-    if (state.phase == StylusPhase::Attaching)
+    /* "Attaching" is the driver's only word for "the pen was just seated": it
+     * reports nothing at all when the pen leaves the dock, so this event - not
+     * a change in the state - is what opens a stage. Being seated again repeats
+     * it verbatim, which is precisely the case a given-up wait has to be pulled
+     * out of. It is never sent while the pen just sits there, so the driver's
+     * periodic chatter still cannot resurrect the popup. */
+    if (state.phase == StylusPhase::Attaching) {
+        if (m_gaveUp)
+            qInfo("PopupWidget: the pen was seated again, so the wait starts over");
         m_btConnected = false;
-
-    if (stageChanged)
         m_gaveUp = false;
+    }
 
     if (m_gaveUp)
         return;
@@ -224,6 +224,25 @@ void PopupWidget::showState(const StylusState &state)
         renderFrame();
     if (canShowFinal())
         m_dismissTimer->start();
+}
+
+void PopupWidget::onConnectAttemptStarted()
+{
+    /* An attempt can begin long after the pen was seated: the driver only moves
+     * on to its "complete" stage when the charging monitor happens to run next,
+     * which may well be past the point where the popup gave up. Without a wait
+     * here, that late connection would just appear out of nowhere. */
+    if (!m_state.attached)
+        return;
+
+    if (m_gaveUp)
+        qInfo("PopupWidget: an attempt is starting, so the wait starts over");
+    m_gaveUp = false;
+
+    if (!m_shown)
+        slideIn(targetHeightForState());
+    else if (!canShowFinal() && !m_connectTimer->isActive())
+        armConnectTimer();
 }
 
 void PopupWidget::onBtConnected()

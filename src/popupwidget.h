@@ -25,6 +25,14 @@ public:
 
 public slots:
     void showState(const StylusState &state);
+
+    /**
+     * A connection attempt is now running. Opens a wait for it when this attach
+     * stage has none left, which is what happens when the attempt only starts
+     * after the popup gave up on the pen.
+     */
+    void onConnectAttemptStarted();
+
     void onBtConnected();
     void onBtConnectionFailed(const QString &error);
 

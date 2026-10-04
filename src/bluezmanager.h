@@ -24,6 +24,12 @@ public:
     void cancel();
 
 signals:
+    /**
+     * A request was accepted and an attempt is now running for it. The popup
+     * waits on this: the request can be made long after the pen was seated.
+     */
+    void attemptStarted();
+
     void pairedAndConnected(const QString &macAddress);
     void pairingFailed(const QString &macAddress, const QString &error);
 

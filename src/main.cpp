@@ -50,6 +50,9 @@ int main(int argc, char *argv[])
                      &app, onStateChanged,
                      Qt::QueuedConnection);
 
+    QObject::connect(&bluez, &BluezManager::attemptStarted,
+                     &popup, &PopupWidget::onConnectAttemptStarted,
+                     Qt::QueuedConnection);
     QObject::connect(&bluez, &BluezManager::pairedAndConnected,
                      &popup, &PopupWidget::onBtConnected,
                      Qt::QueuedConnection);

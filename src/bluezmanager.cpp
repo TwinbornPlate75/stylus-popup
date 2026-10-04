@@ -44,6 +44,10 @@ void BluezManager::ensurePaired(const QString &macAddress)
 
     m_pendingMac = macAddress;
 
+    /* From here on the attempt is ours: it runs until it succeeds, fails or is
+     * cancelled. The popup counts this as a reason to wait for the pen. */
+    emit attemptStarted();
+
     QDBusInterface objectManager(BLUEZ_SERVICE, "/", OBJECT_MANAGER_IF,
                                  QDBusConnection::systemBus());
     if (!objectManager.isValid()) {
