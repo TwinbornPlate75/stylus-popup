@@ -56,7 +56,6 @@ bool ColorTheme::loadFromQt6ct()
         }
 
         loadFrom(path);
-        m_path = path;
         qDebug("colortheme: loaded — surface=%s primary=%s (from %s)",
                qPrintable(m_surface.name()), qPrintable(m_primary.name()),
                qPrintable(path));
@@ -64,7 +63,6 @@ bool ColorTheme::loadFromQt6ct()
     }
 
     qWarning("colortheme: no matugen color config found; using fallback theme colors");
-    m_path.clear();
     return false;
 }
 

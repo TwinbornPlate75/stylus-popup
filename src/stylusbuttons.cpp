@@ -169,9 +169,16 @@ bool StylusButtonMonitor::inspect(const QString &path, Node *node)
     return true;
 }
 
-ButtonGestureDetector &StylusButtonMonitor::detectorFor(Node &node, StylusButton button)
+const ButtonGestureDetector &StylusButtonMonitor::detectorFor(const Node &node,
+                                                             StylusButton button)
 {
     return button == StylusButton::Primary ? node.primaryDetector : node.secondaryDetector;
+}
+
+ButtonGestureDetector &StylusButtonMonitor::detectorFor(Node &node, StylusButton button)
+{
+    const Node &self = node;  // the const overload owns the choice
+    return const_cast<ButtonGestureDetector &>(detectorFor(self, button));
 }
 
 int64_t StylusButtonMonitor::monotonicMs()
@@ -210,12 +217,8 @@ void StylusButtonMonitor::stop()
 
 void StylusButtonMonitor::run()
 {
-    if (!m_config.enabled) {
-        qInfo("StylusButtonMonitor: button mapping is disabled by the config "
-              "(enabled=false)");
-        return;
-    }
-
+    /* `enabled=false` never reaches this thread: StylusButtonMapper::start()
+     * checks it and reports it without starting us. */
     int inotifyFd = ::inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
     if (inotifyFd >= 0) {
         const uint32_t mask = IN_CREATE | IN_DELETE | IN_MOVED_TO | IN_MOVED_FROM | IN_ATTRIB;
@@ -408,13 +411,9 @@ void StylusButtonMonitor::flushDueGestures(std::vector<Node> &nodes)
     const int64_t now = monotonicMs();
 
     for (Node &node : nodes) {
-        const std::pair<StylusButton, ButtonGestureDetector *> detectors[] = {
-            {StylusButton::Primary,   &node.primaryDetector},
-            {StylusButton::Secondary, &node.secondaryDetector},
-        };
-        for (const auto &entry : detectors) {
-            while (std::optional<StylusGesture> gesture = entry.second->tick(now))
-                emit gestureTriggered(entry.first, *gesture, node.name);
+        for (StylusButton button : {StylusButton::Primary, StylusButton::Secondary}) {
+            while (std::optional<StylusGesture> gesture = detectorFor(node, button).tick(now))
+                emit gestureTriggered(button, *gesture, node.name);
         }
     }
 }
@@ -424,8 +423,8 @@ int StylusButtonMonitor::nextTimeoutMs(const std::vector<Node> &nodes) const
     int64_t earliest = -1;
 
     for (const Node &node : nodes) {
-        for (const ButtonGestureDetector *detector : {&node.primaryDetector, &node.secondaryDetector}) {
-            const int64_t deadline = detector->deadlineMs();
+        for (StylusButton button : {StylusButton::Primary, StylusButton::Secondary}) {
+            const int64_t deadline = detectorFor(node, button).deadlineMs();
             if (deadline >= 0 && (earliest < 0 || deadline < earliest))
                 earliest = deadline;
         }

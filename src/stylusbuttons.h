@@ -112,7 +112,8 @@ private:
      *  On success the descriptor stays open for the caller to grab/close. */
     static bool inspect(const QString &path, Node *node);
 
-    static ButtonGestureDetector &detectorFor(Node &node, StylusButton button);
+    static ButtonGestureDetector       &detectorFor(Node &node, StylusButton button);
+    static const ButtonGestureDetector &detectorFor(const Node &node, StylusButton button);
 
     void scan(std::vector<Node> &nodes);
     void attach(std::vector<Node> &nodes, const Node &node);

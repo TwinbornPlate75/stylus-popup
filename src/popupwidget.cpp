@@ -206,7 +206,7 @@ void PopupWidget::showState(const StylusState &state)
         return;
 
     if (!m_shown) {
-        slideIn(targetHeightForState());
+        slideIn();
         return;
     }
 
@@ -240,7 +240,7 @@ void PopupWidget::onConnectAttemptStarted()
     m_gaveUp = false;
 
     if (!m_shown)
-        slideIn(targetHeightForState());
+        slideIn();
     else if (!canShowFinal() && !m_connectTimer->isActive())
         armConnectTimer();
 }
@@ -283,9 +283,9 @@ void PopupWidget::transitionToFinal()
     }
 }
 
-void PopupWidget::slideIn(int targetHeight)
+void PopupWidget::slideIn()
 {
-    startAnimation(0, targetHeight, QEasingCurve::OutBack);
+    startAnimation(0, targetHeightForState(), QEasingCurve::OutBack);
     m_spinnerTimer->start();
     armConnectTimer();
 }

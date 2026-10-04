@@ -15,9 +15,8 @@ struct PopupConfig {
      * How long the pen has to connect after it attaches, counted from the
      * moment the popup starts waiting for it. When the wait runs out the popup
      * slides away and the pending connection attempt is dropped, so nothing
-     * retries that attach stage on its own - but the money is not lost: the
-     * next attach (or the next stage of this one) opens a fresh window. `0`
-     * waits forever, which is what a fresh config used to do.
+     * retries that attach stage on its own - the next attach, or the next
+     * stage of this one, opens a fresh window. `0` waits forever.
      */
     int connectTimeoutMs = kDefaultConnectTimeoutMs;
 };

@@ -47,7 +47,7 @@ private slots:
     void onConnectTimeout();
 
 private:
-    void slideIn(int targetHeight);
+    void slideIn();
     void slideOut();
     void startAnimation(int fromH, int toH, const QEasingCurve &curve);
     void transitionToFinal();
