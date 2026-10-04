@@ -12,6 +12,7 @@ class QFileSystemWatcher;
 class QPainter;
 
 #include "colortheme.h"
+#include "popupconfig.h"
 #include "stylusmonitor.h"
 #include "waylandlayersurface.h"
 
@@ -20,12 +21,22 @@ class PopupWidget : public QObject
     Q_OBJECT
 
 public:
-    explicit PopupWidget(QObject *parent = nullptr);
+    explicit PopupWidget(const PopupConfig &config, QObject *parent = nullptr);
 
 public slots:
     void showState(const StylusState &state);
     void onBtConnected();
     void onBtConnectionFailed(const QString &error);
+
+signals:
+    /**
+     * The pen did not connect within `connect-timeout-ms`. The popup has
+     * already given up on it; this is the cue to drop the pending attempt.
+     */
+    void connectTimedOut();
+
+private slots:
+    void onConnectTimeout();
 
 private:
     void slideIn(int targetHeight);
@@ -42,6 +53,17 @@ private:
     void drawFinalContent(QPainter &p);
     void drawLimitBadge(QPainter &p);
     QRect spinnerRectFor(const QRect &container) const;
+
+    /** Starts the wait window, unless the timeout is switched off. */
+    void armConnectTimer();
+
+    /** Stops the two timers that only run while the pen is on its way. */
+    void stopWaitingTimers();
+
+    /** Ends the wait and takes the popup off screen. `gaveUp` records whether
+     *  this attach stage is over for good (no connection is coming) or was
+     *  merely interrupted (the pen detached, so a fresh attach may wait). */
+    void endWaiting(bool gaveUp);
 
     static constexpr int kSurfaceHeight   = 110;
     static constexpr int kCapsuleWidth    = 260;
@@ -62,10 +84,13 @@ private:
     QTimer              *m_animTimer;
     QTimer              *m_dismissTimer;
     QTimer              *m_spinnerTimer;
+    QTimer              *m_connectTimer;
     StylusState          m_state;
     bool                 m_shown  = false;
     bool                 m_dirty  = true;
     bool                 m_btConnected = false;
+    bool                 m_gaveUp = false;
+    int                  m_connectTimeoutMs = PopupConfig::kDefaultConnectTimeoutMs;
     int                  m_screenW = 1080;
     int                  m_spinnerAngle = 0;
     bool                 m_morphing = false;

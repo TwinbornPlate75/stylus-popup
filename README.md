@@ -102,6 +102,9 @@ primary-long-press=niri msg action close-window
 secondary=niri msg action focus-workspace-up
 secondary-double-click=niri msg action move-column-to-workspace-up
 secondary-long-press=niri msg action close-window
+
+[popup]
+connect-timeout-ms=15000
 ```
 
 | Key | Meaning |
@@ -117,6 +120,12 @@ secondary-long-press=niri msg action close-window
 
 An empty command disables that gesture. Both thresholds are clamped to
 50-10000 ms, and a value that is not a number keeps the default.
+
+`connect-timeout-ms` in `[popup]` is how long the pen has to connect after it
+attaches. When the wait runs out the popup slides away and the pending attempt
+is dropped, so nothing retries it until the pen is attached again; `0` waits
+forever. It is clamped to 0-600000 ms, and a value that is not a number keeps
+the default.
 
 A command is handed to `/bin/sh -c` with `STYLUS_BUTTON` (`primary` or
 `secondary`) and `STYLUS_GESTURE` (`single`, `double-click`, `long-press`)

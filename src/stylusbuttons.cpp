@@ -1,5 +1,7 @@
 #include "stylusbuttons.h"
 
+#include "popupconfig.h"
+
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -96,8 +98,10 @@ QString orUnbound(const QString &command)
 }
 
 /**
- * Writes the shipped defaults with a short explanation, so the mapping can be
- * discovered and edited without reading the source.
+ * Writes the shipped defaults with a short explanation, so the settings can be
+ * discovered and edited without reading the source. The file holds the popup's
+ * section too: it is created here, and this is the only writer, so the popup
+ * can stay a reader.
  */
 bool writeDefaultConfig(const ButtonMapConfig &config)
 {
@@ -115,7 +119,7 @@ bool writeDefaultConfig(const ButtonMapConfig &config)
     }
 
     QTextStream out(&file);
-    out << "# stylus-popup button mapping.\n"
+    out << "# stylus-popup configuration.\n"
            "#\n"
            "# Both side buttons of the stylus arrive over Bluetooth HID as ordinary\n"
            "# keyboard keys: the main button sends PAGE_DOWN, the secondary one\n"
@@ -150,10 +154,16 @@ bool writeDefaultConfig(const ButtonMapConfig &config)
            "primary-long-press=" << config.primaryLong << "\n"
            "secondary=" << config.secondaryCommand << "\n"
            "secondary-double-click=" << config.secondaryDouble << "\n"
-           "secondary-long-press=" << config.secondaryLong << "\n";
+           "secondary-long-press=" << config.secondaryLong << "\n"
+           "\n"
+           "[popup]\n"
+           "# How long the pen has to connect after it attaches. When the wait\n"
+           "# runs out the popup slides away and the pending attempt is dropped\n"
+           "# until the pen is attached again. 0 waits forever.\n"
+           "connect-timeout-ms=" << PopupConfig::kDefaultConnectTimeoutMs << "\n";
     file.close();
 
-    qInfo("StylusButtonMapper: wrote default button mapping to %s",
+    qInfo("StylusButtonMapper: wrote the default configuration to %s",
           qPrintable(config.sourcePath));
     return true;
 }

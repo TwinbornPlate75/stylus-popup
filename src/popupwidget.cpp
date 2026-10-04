@@ -94,12 +94,14 @@ static void drawCapsuleBackground(QPainter &p, const QRect &rect, qreal radius,
     p.drawPath(path);
 }
 
-PopupWidget::PopupWidget(QObject *parent)
+PopupWidget::PopupWidget(const PopupConfig &config, QObject *parent)
     : QObject(parent)
     , m_layer(new WaylandLayerSurface(this))
     , m_animTimer(new QTimer(this))
     , m_dismissTimer(new QTimer(this))
     , m_spinnerTimer(new QTimer(this))
+    , m_connectTimer(new QTimer(this))
+    , m_connectTimeoutMs(config.connectTimeoutMs)
 {
     updateLayoutCache();
 
@@ -144,6 +146,11 @@ PopupWidget::PopupWidget(QObject *parent)
     m_spinnerTimer->setInterval(kSpinnerMs);
     connect(m_spinnerTimer, &QTimer::timeout, this, &PopupWidget::onSpinnerTick);
 
+    /* Single shot: re-armed by every wait, so the deadline is counted from the
+     * moment the popup started waiting rather than from the last event. */
+    m_connectTimer->setSingleShot(true);
+    connect(m_connectTimer, &QTimer::timeout, this, &PopupWidget::onConnectTimeout);
+
     m_titleFont.setPixelSize(14);
     m_titleFont.setWeight(QFont::Medium);
 
@@ -169,6 +176,13 @@ void PopupWidget::showState(const StylusState &state)
 {
     const bool wasFinal = canShowFinal();
 
+    /* A changed stage - the pen appearing, or the driver moving on from
+     * "attaching" - is a fresh chance to connect, so a wait that was given up
+     * on earlier may start over. Everything else is chatter from an unchanged
+     * pen and must not resurrect the popup. */
+    const bool stageChanged = state.attached != m_state.attached
+                           || state.phase != m_state.phase;
+
     if (state != m_state) {
         m_state = state;
         m_dirty = true;
@@ -178,14 +192,18 @@ void PopupWidget::showState(const StylusState &state)
 
     if (!state.attached) {
         m_btConnected = false;
-        m_spinnerTimer->stop();
-        if (m_shown)
-            slideOut();
+        endWaiting(false);  /* the pen detached: a fresh attach may wait again */
         return;
     }
 
     if (state.phase == StylusPhase::Attaching)
         m_btConnected = false;
+
+    if (stageChanged)
+        m_gaveUp = false;
+
+    if (m_gaveUp)
+        return;
 
     if (!m_shown) {
         slideIn(targetHeightForState());
@@ -196,6 +214,11 @@ void PopupWidget::showState(const StylusState &state)
         transitionToFinal();
         return;
     }
+
+    if (canShowFinal())
+        m_connectTimer->stop();
+    else if (!m_connectTimer->isActive())
+        armConnectTimer();
 
     if (m_dirty)
         renderFrame();
@@ -209,6 +232,8 @@ void PopupWidget::onBtConnected()
         return;
 
     m_btConnected = true;
+    m_gaveUp = false;
+    m_connectTimer->stop();
     if (canShowFinal())
         transitionToFinal();
 }
@@ -216,6 +241,10 @@ void PopupWidget::onBtConnected()
 void PopupWidget::onBtConnectionFailed(const QString &error)
 {
     qWarning("PopupWidget: Bluetooth connection failed: %s", qPrintable(error));
+
+    /* Nothing retries this attach stage on its own, so stop promising a
+     * connection that is not coming. */
+    endWaiting(true);
 }
 
 void PopupWidget::transitionToFinal()
@@ -239,12 +268,46 @@ void PopupWidget::slideIn(int targetHeight)
 {
     startAnimation(0, targetHeight, QEasingCurve::OutBack);
     m_spinnerTimer->start();
+    armConnectTimer();
 }
 
 void PopupWidget::slideOut()
 {
-    m_spinnerTimer->stop();
+    stopWaitingTimers();
     startAnimation(m_layer->visibleHeight(), 0, QEasingCurve::InBack);
+}
+
+void PopupWidget::armConnectTimer()
+{
+    if (m_connectTimeoutMs <= 0)
+        return;  /* 0 switches the timeout off: waiting for the pen never ends */
+
+    m_connectTimer->start(m_connectTimeoutMs);
+}
+
+void PopupWidget::stopWaitingTimers()
+{
+    m_connectTimer->stop();
+    m_spinnerTimer->stop();
+}
+
+void PopupWidget::endWaiting(bool gaveUp)
+{
+    m_gaveUp = gaveUp;
+
+    if (m_shown)
+        slideOut();  /* stops the waiting timers on its way out */
+    else
+        stopWaitingTimers();
+}
+
+void PopupWidget::onConnectTimeout()
+{
+    qWarning("PopupWidget: the pen did not connect within %d ms, giving up",
+             m_connectTimeoutMs);
+
+    emit connectTimedOut();
+    endWaiting(true);
 }
 
 void PopupWidget::startAnimation(int fromH, int toH, const QEasingCurve &curve)

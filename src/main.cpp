@@ -1,6 +1,7 @@
 #include <QApplication>
 
 #include "bluezmanager.h"
+#include "popupconfig.h"
 #include "popupwidget.h"
 #include "stylusbuttons.h"
 #include "stylusmonitor.h"
@@ -20,7 +21,7 @@ int main(int argc, char *argv[])
     app.setApplicationName("stylus-popup");
     app.setQuitOnLastWindowClosed(false); // keep running even with no visible window
 
-    PopupWidget       popup;
+    PopupWidget       popup(PopupConfig::load(ButtonMapConfig::defaultPath()));
     BluezManager      bluez;
     StylusMonitor     monitor;
     StylusButtonMapper buttons;
@@ -50,6 +51,11 @@ int main(int argc, char *argv[])
     QObject::connect(&bluez, &BluezManager::pairingFailed,
                      &popup, &PopupWidget::onBtConnectionFailed,
                      Qt::QueuedConnection);
+
+    /* The popup gives up on its own timer; the attempt behind it has to be
+     * dropped as well, or its reply would arrive for a pen nobody waits for. */
+    QObject::connect(&popup, &PopupWidget::connectTimedOut,
+                     &bluez, &BluezManager::cancel);
 
     buttons.start();
     monitor.start();

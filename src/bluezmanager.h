@@ -15,6 +15,14 @@ public:
 
     void ensurePaired(const QString &macAddress);
 
+    /**
+     * Drops the attempt in progress: stops discovery and makes every reply
+     * that is still in flight a no-op, so the next `ensurePaired()` starts from
+     * scratch instead of being ignored as a duplicate. Does nothing when no
+     * attempt is pending.
+     */
+    void cancel();
+
 signals:
     void pairedAndConnected(const QString &macAddress);
     void pairingFailed(const QString &macAddress, const QString &error);

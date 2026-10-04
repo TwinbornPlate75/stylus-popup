@@ -58,6 +58,8 @@ set(PROJECT_SOURCES
     src/waylandlayersurface.cpp
     src/popupwidget.h
     src/popupwidget.cpp
+    src/popupconfig.h
+    src/popupconfig.cpp
     src/colortheme.h
     src/colortheme.cpp
     src/bluezmanager.h

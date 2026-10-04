@@ -59,9 +59,23 @@ void BluezManager::ensurePaired(const QString &macAddress)
             this, &BluezManager::onManagedObjectsReply);
 }
 
+void BluezManager::cancel()
+{
+    if (m_pendingMac.isEmpty())
+        return;
+
+    qInfo("BluezManager: dropping the connection attempt for %s", qPrintable(m_pendingMac));
+    finish();
+}
+
 void BluezManager::onManagedObjectsReply(QDBusPendingCallWatcher *watcher)
 {
     watcher->deleteLater();
+
+    /* A cancelled attempt clears m_pendingMac; a reply that lands afterwards
+     * must not bring it back to life. */
+    if (m_pendingMac.isEmpty())
+        return;
 
     QDBusPendingReply<QMap<QDBusObjectPath, QMap<QString, QVariantMap>>> reply = *watcher;
     if (reply.isError()) {
@@ -142,6 +156,9 @@ void BluezManager::startDiscovery()
 void BluezManager::onStartDiscoveryReply(QDBusPendingCallWatcher *watcher)
 {
     watcher->deleteLater();
+
+    if (m_pendingMac.isEmpty())
+        return;
 
     QDBusPendingReply<> reply = *watcher;
     if (reply.isError()) {
@@ -233,6 +250,11 @@ void BluezManager::onPairReply(QDBusPendingCallWatcher *watcher)
     const QString devicePath = watcher->property("devicePath").toString();
     watcher->deleteLater();
 
+    /* `Pair` is the call that can sit in BlueZ for a long time; a reply for an
+     * attempt that was dropped in the meantime is not news any more. */
+    if (m_pendingMac.isEmpty())
+        return;
+
     QDBusPendingReply<> reply = *watcher;
     if (reply.isError()) {
         reportError("Pair", reply.error());
@@ -254,6 +276,9 @@ void BluezManager::onPairReply(QDBusPendingCallWatcher *watcher)
 void BluezManager::onConnectReply(QDBusPendingCallWatcher *watcher)
 {
     watcher->deleteLater();
+
+    if (m_pendingMac.isEmpty())
+        return;
 
     QDBusPendingReply<> reply = *watcher;
     if (reply.isError()) {
