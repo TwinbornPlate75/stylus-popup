@@ -7,10 +7,17 @@
 #include <atomic>
 #include <vector>
 
-/** The two side buttons of the pen, as reported over Bluetooth HID. */
+#include "stylusgestures.h"
+
+/**
+ * The pen's two side buttons. They are named after their role on the pen and
+ * never after the keyboard key they happen to send: the main (primary) button
+ * reports PAGE_DOWN and the secondary one PAGE_UP, the other way round from
+ * what those key names suggest.
+ */
 enum class StylusButton {
-    PageUp,
-    PageDown
+    Primary,
+    Secondary
 };
 
 /** Stable identifier of a button, also exported to the command as STYLUS_BUTTON. */
@@ -18,21 +25,31 @@ QString stylusButtonName(StylusButton button);
 
 /**
  * Pen-button -> shell command mapping, read from the `[buttons]` section of
- * stylus-popup's INI config. The file is created with these values on first
- * run, so the defaults below double as the shipped configuration.
+ * stylus-popup's INI config. Each button carries one command per gesture; an
+ * empty command disables that gesture. The file is created with these values
+ * on first run, so the defaults below double as the shipped configuration.
  */
 struct ButtonMapConfig {
-    bool    enabled = true;
-    bool    grab    = true;
-    bool    repeat  = false;
-    QString pageUpCommand   = QStringLiteral("niri msg action focus-workspace-up");
-    QString pageDownCommand = QStringLiteral("niri msg action focus-workspace-down");
+    bool enabled = true;
+    bool grab    = true;
+    bool repeat  = false;
+
+    /** Gesture thresholds, also user-visible as `double-click-ms`/`long-press-ms`. */
+    int doubleClickMs = 300;
+    int longPressMs   = 500;
+
+    QString primaryCommand   = QStringLiteral("niri msg action focus-workspace-down");
+    QString primaryDouble    = QStringLiteral("niri msg action move-column-to-workspace-down");
+    QString primaryLong      = QStringLiteral("niri msg action close-window");
+    QString secondaryCommand = QStringLiteral("niri msg action focus-workspace-up");
+    QString secondaryDouble  = QStringLiteral("niri msg action move-column-to-workspace-up");
+    QString secondaryLong    = QStringLiteral("niri msg action close-window");
 
     /** Where the settings were read from (empty when nothing was loaded). */
     QString sourcePath;
 
-    /** Shell command bound to `button`, or an empty string when unbound. */
-    QString commandFor(StylusButton button) const;
+    /** Shell command bound to that gesture of that button; empty when unbound. */
+    QString commandFor(StylusButton button, StylusGesture gesture) const;
 
     /** ~/.config/stylus-popup/config.ini, or $STYLUS_POPUP_CONFIG when set. */
     static QString defaultPath();
@@ -42,8 +59,9 @@ struct ButtonMapConfig {
 };
 
 /**
- * Watches the Bluetooth HID input nodes the stylus exposes and turns their
- * PAGE_UP / PAGE_DOWN key presses into `buttonPressed`.
+ * Watches the Bluetooth HID input nodes the stylus exposes and turns the key
+ * events of its two side buttons into gestures: a click, a double click, or a
+ * long press, as configured.
  *
  * A node is the pen when its evdev name is one of the two names the supported
  * Xiaomi pens publish *and* it carries PAGE_UP or PAGE_DOWN. The capability
@@ -52,8 +70,11 @@ struct ButtonMapConfig {
  *
  * The nodes are exclusive-grabbed (`EVIOCGRAB`) so the key stroke is swallowed
  * instead of reaching the focused application, and `poll()`ed so an absent pen
- * costs nothing. Nodes appearing or disappearing - which is how the pen
- * connects and disconnects - are picked up via inotify plus a slow re-scan.
+ * costs nothing. The poll timeout doubles as the gesture timer: it is shortened
+ * to the next gesture deadline, which is the only reason an idle monitor ever
+ * wakes up before the periodic re-scan. Nodes appearing or disappearing - which
+ * is how the pen connects and disconnects - are picked up via inotify plus a
+ * slow re-scan.
  */
 class StylusButtonMonitor : public QThread
 {
@@ -69,7 +90,7 @@ public:
     static void printMatchingDevices(const ButtonMapConfig &config);
 
 signals:
-    void buttonPressed(StylusButton button, const QString &deviceName);
+    void gestureTriggered(StylusButton button, StylusGesture gesture, const QString &deviceName);
 
 protected:
     void run() override;
@@ -80,25 +101,43 @@ private:
         QString path;
         QString name;
         QString uniq;  // shown to the user, never matched on
-        int     fd          = -1;
-        int     openError   = 0;
-        bool    grabbed     = false;
-        bool    nameMatch   = false;
-        bool    hasPageUp   = false;
-        bool    hasPageDown = false;
+        int     fd           = -1;
+        int     openError    = 0;
+        bool    grabbed      = false;
+        bool    nameMatch    = false;
+        bool    hasPrimary   = false;
+        bool    hasSecondary = false;
+
+        /** Gesture state, kept per node so a reconnected pen starts clean. */
+        ButtonGestureDetector primaryDetector;
+        ButtonGestureDetector secondaryDetector;
 
         /** A node is ours when it is the pen *and* carries a mapped key. */
-        bool matches() const { return nameMatch && (hasPageUp || hasPageDown); }
+        bool matches() const { return nameMatch && (hasPrimary || hasSecondary); }
     };
 
     /** Opens `path` and fills `node`; false only when it cannot be opened.
      *  On success the descriptor stays open for the caller to grab/close. */
     static bool inspect(const QString &path, Node *node);
 
+    static ButtonGestureDetector &detectorFor(Node &node, StylusButton button);
+
     void scan(std::vector<Node> &nodes);
     void attach(std::vector<Node> &nodes, const Node &node);
-    bool drain(const Node &node, bool dispatch);
+    bool drain(Node &node, bool dispatch);
     void closeNode(Node &node);
+
+    /** Feeds one raw key event (1 press / 0 release / 2 repeat) to the detector
+     *  of `button` and emits the gesture it produces, if any. */
+    void feed(Node &node, StylusButton button, int value, int64_t nowMs);
+
+    /** Millisecond value for poll(): the next gesture deadline, else the re-scan. */
+    int nextTimeoutMs(const std::vector<Node> &nodes) const;
+
+    /** Emits the gestures whose deadlines have passed. */
+    void flushDueGestures(std::vector<Node> &nodes);
+
+    static int64_t monotonicMs();
 
     static constexpr int kRescanMs = 2000;
 
@@ -111,8 +150,8 @@ private:
 
 /**
  * Glue between the monitor and the configured shell commands: runs the command
- * bound to a button through `/bin/sh -c` and exports `STYLUS_BUTTON` so a single
- * command can tell the two buttons apart.
+ * bound to a button gesture through `/bin/sh -c` and exports `STYLUS_BUTTON`
+ * plus `STYLUS_GESTURE`, so a single command can serve every button and gesture.
  */
 class StylusButtonMapper : public QObject
 {
@@ -125,7 +164,8 @@ public:
     void start();
 
 private slots:
-    void onButtonPressed(StylusButton button, const QString &deviceName);
+    void onGestureTriggered(StylusButton button, StylusGesture gesture,
+                            const QString &deviceName);
 
 private:
     ButtonMapConfig      m_config;

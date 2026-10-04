@@ -62,6 +62,8 @@ set(PROJECT_SOURCES
     src/colortheme.cpp
     src/bluezmanager.h
     src/bluezmanager.cpp
+    src/stylusgestures.h
+    src/stylusgestures.cpp
     src/stylusbuttons.h
     src/stylusbuttons.cpp
     ${PROTOCOL_HEADER}

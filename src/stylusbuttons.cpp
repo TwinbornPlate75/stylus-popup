@@ -20,8 +20,10 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <utility>
@@ -31,10 +33,12 @@ namespace {
 constexpr char kInputDir[]     = "/dev/input";
 constexpr char kButtonsGroup[] = "buttons";
 
-/* The pen reports its two side buttons as ordinary keyboard keys over
- * Bluetooth HID. */
-constexpr int kPageUpKey   = KEY_PAGEUP;
-constexpr int kPageDownKey = KEY_PAGEDOWN;
+/* Which key code each side button reports. The main button sends PAGE_DOWN
+ * and the secondary one PAGE_UP - the opposite of what those key names suggest,
+ * which is why the buttons are named after their role and the key codes are
+ * mentioned only here. */
+constexpr int kPrimaryKey   = KEY_PAGEDOWN;
+constexpr int kSecondaryKey = KEY_PAGEUP;
 
 /* Bluetooth name of the supported pens. Both generations of the Xiaomi
  * Stylus Pen advertise the same one, and the kernel derives both evdev node
@@ -42,6 +46,12 @@ constexpr int kPageDownKey = KEY_PAGEDOWN;
  * pen's bare pointer/digitizer node. */
 constexpr char kPenBleName[]        = "Xiaomi Smart Pen";
 constexpr char kPenKeyboardSuffix[] = " Keyboard";
+
+/* Gesture thresholds are clamped: a typo must not make the mapping unusable
+ * (0 ms would let every click be swallowed as a long press, a huge value would
+ * delay every click into the next session). */
+constexpr int kMinGestureMs = 50;
+constexpr int kMaxGestureMs = 10000;
 
 /** True for the two evdev node names the supported pens produce. */
 bool isStylusNodeName(const QString &name)
@@ -71,6 +81,20 @@ QString iniText(const QSettings &settings, const QString &key, const QString &fa
     return parts.size() > 1 ? parts.join(QLatin1Char(',')) : value.toString();
 }
 
+/** Reads a gesture threshold in ms; an unparsable value keeps the default. */
+int iniMilliseconds(const QSettings &settings, const QString &key, int fallback)
+{
+    bool ok = false;
+    const int value = settings.value(key).toInt(&ok);
+    return ok ? qBound(kMinGestureMs, value, kMaxGestureMs) : fallback;
+}
+
+/** An empty command means "gesture disabled" - make that visible in the output. */
+QString orUnbound(const QString &command)
+{
+    return command.isEmpty() ? QStringLiteral("(unbound)") : command;
+}
+
 /**
  * Writes the shipped defaults with a short explanation, so the mapping can be
  * discovered and edited without reading the source.
@@ -94,20 +118,39 @@ bool writeDefaultConfig(const ButtonMapConfig &config)
     out << "# stylus-popup button mapping.\n"
            "#\n"
            "# Both side buttons of the stylus arrive over Bluetooth HID as ordinary\n"
-           "# keyboard keys. stylus-popup grabs them so they no longer reach the\n"
-           "# focused window, and runs the matching command through /bin/sh -c with\n"
-           "# STYLUS_BUTTON exported as \"page-up\" or \"page-down\".\n"
+           "# keyboard keys: the main button sends PAGE_DOWN, the secondary one\n"
+           "# PAGE_UP. They are named after the pen, not after the key, so\n"
+           "# \"primary\" is the main button and \"secondary\" the other one.\n"
+           "# stylus-popup grabs them so they no longer reach the focused window,\n"
+           "# and runs the matching command through /bin/sh -c with STYLUS_BUTTON\n"
+           "# (\"primary\" or \"secondary\") and STYLUS_GESTURE\n"
+           "# (\"single\", \"double-click\" or \"long-press\") exported.\n"
+           "#\n"
+           "# Each button has three gestures: <button> is a single click,\n"
+           "# <button>-double-click is a second click within double-click-ms, and\n"
+           "# <button>-long-press is a press held for long-press-ms. One press\n"
+           "# produces at most one gesture. An empty command disables that gesture.\n"
+           "# Whether a click is the first of two can only be known once the click\n"
+           "# window has passed, so every click pays double-click-ms.\n"
            "\n"
            "[buttons]\n"
            "# Set to false to leave the buttons alone.\n"
            "enabled=true\n"
            "# Grab the input node exclusively, swallowing the key stroke.\n"
            "grab=true\n"
-           "# Also fire the command on key auto-repeat while the button is held.\n"
+           "# Also fire the mapped command on key auto-repeat while the button is\n"
+           "# held: the repeat re-runs the gesture the hold resolved to.\n"
            "repeat=false\n"
+           "# Click window, and how long a press has to be held.\n"
+           "double-click-ms=" << config.doubleClickMs << "\n"
+           "long-press-ms=" << config.longPressMs << "\n"
            "\n"
-           "page-up=" << config.pageUpCommand << "\n"
-           "page-down=" << config.pageDownCommand << "\n";
+           "primary=" << config.primaryCommand << "\n"
+           "primary-double-click=" << config.primaryDouble << "\n"
+           "primary-long-press=" << config.primaryLong << "\n"
+           "secondary=" << config.secondaryCommand << "\n"
+           "secondary-double-click=" << config.secondaryDouble << "\n"
+           "secondary-long-press=" << config.secondaryLong << "\n";
     file.close();
 
     qInfo("StylusButtonMapper: wrote default button mapping to %s",
@@ -182,7 +225,8 @@ const char *yesNo(bool value) { return value ? "yes" : "no"; }
 
 QString stylusButtonName(StylusButton button)
 {
-    return button == StylusButton::PageUp ? QStringLiteral("page-up") : QStringLiteral("page-down");
+    return button == StylusButton::Primary ? QStringLiteral("primary")
+                                           : QStringLiteral("secondary");
 }
 
 /* ── ButtonMapConfig ─────────────────────────────────────────────────────── */
@@ -199,9 +243,17 @@ QString ButtonMapConfig::defaultPath()
     return base + QStringLiteral("/stylus-popup/config.ini");
 }
 
-QString ButtonMapConfig::commandFor(StylusButton button) const
+QString ButtonMapConfig::commandFor(StylusButton button, StylusGesture gesture) const
 {
-    return button == StylusButton::PageUp ? pageUpCommand : pageDownCommand;
+    switch (gesture) {
+    case StylusGesture::Single:
+        return button == StylusButton::Primary ? primaryCommand : secondaryCommand;
+    case StylusGesture::DoubleClick:
+        return button == StylusButton::Primary ? primaryDouble : secondaryDouble;
+    case StylusGesture::LongPress:
+        return button == StylusButton::Primary ? primaryLong : secondaryLong;
+    }
+    return QString();
 }
 
 ButtonMapConfig ButtonMapConfig::load(const QString &path)
@@ -214,11 +266,17 @@ ButtonMapConfig ButtonMapConfig::load(const QString &path)
     if (existed) {
         QSettings settings(config.sourcePath, QSettings::IniFormat);
         settings.beginGroup(kButtonsGroup);
-        config.enabled         = settings.value("enabled",  config.enabled).toBool();
-        config.grab            = settings.value("grab",     config.grab).toBool();
-        config.repeat          = settings.value("repeat",   config.repeat).toBool();
-        config.pageUpCommand   = iniText(settings, "page-up",   config.pageUpCommand);
-        config.pageDownCommand = iniText(settings, "page-down", config.pageDownCommand);
+        config.enabled         = settings.value("enabled", config.enabled).toBool();
+        config.grab            = settings.value("grab",    config.grab).toBool();
+        config.repeat          = settings.value("repeat",  config.repeat).toBool();
+        config.doubleClickMs   = iniMilliseconds(settings, "double-click-ms", config.doubleClickMs);
+        config.longPressMs     = iniMilliseconds(settings, "long-press-ms", config.longPressMs);
+        config.primaryCommand   = iniText(settings, "primary", config.primaryCommand);
+        config.primaryDouble    = iniText(settings, "primary-double-click", config.primaryDouble);
+        config.primaryLong      = iniText(settings, "primary-long-press", config.primaryLong);
+        config.secondaryCommand = iniText(settings, "secondary", config.secondaryCommand);
+        config.secondaryDouble  = iniText(settings, "secondary-double-click", config.secondaryDouble);
+        config.secondaryLong    = iniText(settings, "secondary-long-press", config.secondaryLong);
         settings.endGroup();
 
         qInfo("StylusButtonMapper: loaded button mapping from %s", qPrintable(config.sourcePath));
@@ -246,10 +304,22 @@ bool StylusButtonMonitor::inspect(const QString &path, Node *node)
     node->nameMatch = isStylusNodeName(node->name);
 
     if (node->nameMatch) {
-        node->hasPageUp   = evdevSupportsKey(node->fd, kPageUpKey);
-        node->hasPageDown = evdevSupportsKey(node->fd, kPageDownKey);
+        node->hasPrimary   = evdevSupportsKey(node->fd, kPrimaryKey);
+        node->hasSecondary = evdevSupportsKey(node->fd, kSecondaryKey);
     }
     return true;
+}
+
+ButtonGestureDetector &StylusButtonMonitor::detectorFor(Node &node, StylusButton button)
+{
+    return button == StylusButton::Primary ? node.primaryDetector : node.secondaryDetector;
+}
+
+int64_t StylusButtonMonitor::monotonicMs()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
 }
 
 StylusButtonMonitor::StylusButtonMonitor(ButtonMapConfig config, QObject *parent)
@@ -312,7 +382,9 @@ void StylusButtonMonitor::run()
         if (m_wakeFd >= 0)
             pfds.push_back({m_wakeFd, POLLIN, 0});
 
-        const int rc = ::poll(pfds.data(), pfds.size(), kRescanMs);
+        // The poll timeout is the gesture timer: waking up at the next deadline
+        // is what turns a held or half-finished gesture into its verdict.
+        const int rc = ::poll(pfds.data(), pfds.size(), nextTimeoutMs(nodes));
         if (rc < 0) {
             if (errno == EINTR)
                 continue;
@@ -356,6 +428,8 @@ void StylusButtonMonitor::run()
 
         if (rescan)
             scan(nodes);
+
+        flushDueGestures(nodes);
     }
 
     for (Node &node : nodes)
@@ -410,6 +484,10 @@ void StylusButtonMonitor::attach(std::vector<Node> &nodes, const Node &node)
 {
     Node watched = node;
 
+    const GestureTiming timing{m_config.doubleClickMs, m_config.longPressMs};
+    watched.primaryDetector.configure(timing);
+    watched.secondaryDetector.configure(timing);
+
     if (m_config.grab) {
         if (::ioctl(watched.fd, EVIOCGRAB, 1) == 0) {
             watched.grabbed = true;
@@ -432,18 +510,18 @@ void StylusButtonMonitor::attach(std::vector<Node> &nodes, const Node &node)
     nodes.push_back(watched);
 }
 
-bool StylusButtonMonitor::drain(const Node &node, bool dispatch)
+bool StylusButtonMonitor::drain(Node &node, bool dispatch)
 {
+    const int64_t now = monotonicMs();
     struct input_event ev;
     for (;;) {
         const ssize_t n = ::read(node.fd, &ev, sizeof ev);
         if (n == static_cast<ssize_t>(sizeof ev)) {
-            if (dispatch && ev.type == EV_KEY && ev.value != 0
-                && (ev.value != 2 || m_config.repeat)) {
-                if (ev.code == kPageUpKey)
-                    emit buttonPressed(StylusButton::PageUp, node.name);
-                else if (ev.code == kPageDownKey)
-                    emit buttonPressed(StylusButton::PageDown, node.name);
+            if (dispatch && ev.type == EV_KEY) {
+                if (ev.code == kPrimaryKey)
+                    feed(node, StylusButton::Primary, ev.value, now);
+                else if (ev.code == kSecondaryKey)
+                    feed(node, StylusButton::Secondary, ev.value, now);
             }
             continue;
         }
@@ -453,6 +531,55 @@ bool StylusButtonMonitor::drain(const Node &node, bool dispatch)
             return true;
         return false;
     }
+}
+
+void StylusButtonMonitor::feed(Node &node, StylusButton button, int value, int64_t nowMs)
+{
+    // An unmapped auto-repeat is dropped here, but the end-of-loop deadline
+    // flush still fires the long press it kept alive.
+    if (value == 2 && !m_config.repeat)
+        return;
+
+    if (std::optional<StylusGesture> gesture = detectorFor(node, button).feed(value, nowMs))
+        emit gestureTriggered(button, *gesture, node.name);
+}
+
+void StylusButtonMonitor::flushDueGestures(std::vector<Node> &nodes)
+{
+    const int64_t now = monotonicMs();
+
+    for (Node &node : nodes) {
+        const std::pair<StylusButton, ButtonGestureDetector *> detectors[] = {
+            {StylusButton::Primary,   &node.primaryDetector},
+            {StylusButton::Secondary, &node.secondaryDetector},
+        };
+        for (const auto &entry : detectors) {
+            while (std::optional<StylusGesture> gesture = entry.second->tick(now))
+                emit gestureTriggered(entry.first, *gesture, node.name);
+        }
+    }
+}
+
+int StylusButtonMonitor::nextTimeoutMs(const std::vector<Node> &nodes) const
+{
+    int64_t earliest = -1;
+
+    for (const Node &node : nodes) {
+        for (const ButtonGestureDetector *detector : {&node.primaryDetector, &node.secondaryDetector}) {
+            const int64_t deadline = detector->deadlineMs();
+            if (deadline >= 0 && (earliest < 0 || deadline < earliest))
+                earliest = deadline;
+        }
+    }
+
+    if (earliest < 0)
+        return kRescanMs;
+
+    const int64_t remaining = earliest - monotonicMs();
+    if (remaining <= 0)
+        return 0;
+
+    return static_cast<int>(std::min<int64_t>(remaining, kRescanMs));
 }
 
 void StylusButtonMonitor::closeNode(Node &node)
@@ -478,8 +605,8 @@ StylusButtonMapper::StylusButtonMapper(QObject *parent)
     , m_config(ButtonMapConfig::load())
     , m_monitor(new StylusButtonMonitor(m_config, this))
 {
-    connect(m_monitor, &StylusButtonMonitor::buttonPressed,
-            this, &StylusButtonMapper::onButtonPressed,
+    connect(m_monitor, &StylusButtonMonitor::gestureTriggered,
+            this, &StylusButtonMapper::onGestureTriggered,
             Qt::QueuedConnection);
 }
 
@@ -498,24 +625,29 @@ void StylusButtonMapper::start()
     m_monitor->start();
 }
 
-void StylusButtonMapper::onButtonPressed(StylusButton button, const QString &deviceName)
+void StylusButtonMapper::onGestureTriggered(StylusButton button, StylusGesture gesture,
+                                            const QString &deviceName)
 {
     const QString name    = stylusButtonName(button);
-    const QString command = m_config.commandFor(button);
+    const QString gestureName = stylusGestureName(gesture);
+    const QString command = m_config.commandFor(button, gesture);
 
     if (command.isEmpty()) {
-        qInfo("StylusButtonMapper: %s pressed on \"%s\", but no command is bound",
-              qPrintable(name), qPrintable(deviceName));
+        qInfo("StylusButtonMapper: %s %s on \"%s\", but no command is bound",
+              qPrintable(name), qPrintable(gestureName), qPrintable(deviceName));
         return;
     }
 
-    // STYLUS_BUTTON lets a single command serve both buttons.
-    const QString script = QStringLiteral("export STYLUS_BUTTON=%1; %2").arg(name, command);
+    // The two exports let a single command serve every button and gesture.
+    const QString script = QStringLiteral("export STYLUS_BUTTON=%1 STYLUS_GESTURE=%2; %3")
+                               .arg(name, gestureName, command);
 
     if (QProcess::startDetached(QStringLiteral("/bin/sh"), {QStringLiteral("-c"), script}))
-        qInfo("StylusButtonMapper: %s -> %s", qPrintable(name), qPrintable(command));
+        qInfo("StylusButtonMapper: %s %s -> %s",
+              qPrintable(name), qPrintable(gestureName), qPrintable(command));
     else
-        qWarning("StylusButtonMapper: failed to run the command bound to %s", qPrintable(name));
+        qWarning("StylusButtonMapper: failed to run the command bound to %s %s",
+                 qPrintable(name), qPrintable(gestureName));
 }
 
 /* ── Diagnostics ─────────────────────────────────────────────────────────── */
@@ -530,9 +662,20 @@ void StylusButtonMonitor::printMatchingDevices(const ButtonMapConfig &config)
         << "  enabled       : " << yesNo(config.enabled) << "\n"
         << "  grab          : " << yesNo(config.grab) << "\n"
         << "  repeat        : " << yesNo(config.repeat) << "\n"
-        << "  pen name      : " << kPenBleName << "\n"
-        << "  page-up       : " << config.pageUpCommand << "\n"
-        << "  page-down     : " << config.pageDownCommand << "\n\n";
+        << "  timing        : double-click " << config.doubleClickMs
+        << " ms, long-press " << config.longPressMs << " ms\n"
+        << "  pen name      : " << kPenBleName << "\n";
+
+    for (StylusButton button : {StylusButton::Primary, StylusButton::Secondary}) {
+        out << "  " << stylusButtonName(button) << "\n";
+        for (StylusGesture gesture : {StylusGesture::Single,
+                                      StylusGesture::DoubleClick,
+                                      StylusGesture::LongPress}) {
+            out << "    " << stylusGestureName(gesture).leftJustified(12)
+                << ": " << orUnbound(config.commandFor(button, gesture)) << "\n";
+        }
+    }
+    out << "\n";
 
     const QStringList paths = inputEventPaths();
     int watched  = 0;
@@ -553,9 +696,10 @@ void StylusButtonMonitor::printMatchingDevices(const ButtonMapConfig &config)
             ++watched;
             out << "  [grab] " << path << "  \"" << node.name << "\""
                 << "  uniq=" << (node.uniq.isEmpty() ? QStringLiteral("-") : node.uniq)
-                << "  keys:"
-                << (node.hasPageUp   ? QStringLiteral(" page-up")   : QString())
-                << (node.hasPageDown ? QStringLiteral(" page-down") : QString()) << "\n";
+                << "  buttons:"
+                << (node.hasPrimary   ? QStringLiteral(" primary (PAGE_DOWN)") : QString())
+                << (node.hasSecondary ? QStringLiteral(" secondary (PAGE_UP)") : QString())
+                << "\n";
         } else if (node.nameMatch) {
             out << "  [skip] " << path << "  \"" << node.name
                 << "\"  is the pen's node but exposes neither PAGE_UP nor PAGE_DOWN\n";

@@ -106,10 +106,21 @@ emit a source RPM, or `./packaging/build-rpm.sh clean` to wipe the
 
 ## Stylus buttons
 
-The pen's two side buttons arrive over Bluetooth HID as ordinary keyboard keys
-(`PAGE_UP` and `PAGE_DOWN`). stylus-popup grabs the matching input node so the
-key stroke no longer reaches the focused window, and runs a shell command
-instead.
+The pen's two side buttons arrive over Bluetooth HID as ordinary keyboard keys.
+They are named here after the pen rather than after the key: the main button
+(`primary`) sends `PAGE_DOWN` and the secondary one (`secondary`) sends
+`PAGE_UP`. stylus-popup grabs the matching input node so the key stroke no
+longer reaches the focused window, and runs a shell command instead. Each of
+the two buttons carries three gestures:
+
+| Gesture | Fires when |
+| --- | --- |
+| click | the button is released before the long-press threshold |
+| double click | a second click follows within `double-click-ms` |
+| long press | the button is held for `long-press-ms`, while it is still down |
+
+One press produces at most one gesture, and auto-repeat while a button is held
+belongs to the gesture the hold already resolved to.
 
 The mapping lives in `~/.config/stylus-popup/config.ini`, which is created with
 these defaults on first run:
@@ -119,31 +130,48 @@ these defaults on first run:
 enabled=true
 grab=true
 repeat=false
+double-click-ms=300
+long-press-ms=500
 
-page-up=niri msg action focus-workspace-up
-page-down=niri msg action focus-workspace-down
+primary=niri msg action focus-workspace-down
+primary-double-click=niri msg action move-column-to-workspace-down
+primary-long-press=niri msg action close-window
+secondary=niri msg action focus-workspace-up
+secondary-double-click=niri msg action move-column-to-workspace-up
+secondary-long-press=niri msg action close-window
 ```
 
 | Key | Meaning |
 | --- | --- |
 | `enabled` | Master switch; `false` leaves the buttons untouched |
 | `grab` | Grab the node exclusively, swallowing the key stroke. `false` runs the command but lets the key through as well |
-| `repeat` | Also fire the command on key auto-repeat while a button is held |
-| `page-up`, `page-down` | Shell command run for that button; empty disables it |
+| `repeat` | Also fire on key auto-repeat while a button is held; the repeat re-runs the gesture the hold resolved to |
+| `double-click-ms` | How long a click waits for a second one |
+| `long-press-ms` | How long a press has to be held to count as a long press |
+| `primary`, `secondary` | Command for a click; empty disables the gesture |
+| `primary-double-click`, `secondary-double-click` | Command for a double click |
+| `primary-long-press`, `secondary-long-press` | Command for a long press |
 
-Commands are passed to `/bin/sh -c`, with `STYLUS_BUTTON` exported as `page-up`
-or `page-down`, so one command can serve both buttons:
+A click can only be told apart from a double click by waiting to see whether a
+second one follows, so **every click carries `double-click-ms` of delay** -
+lower the value if the mapping feels sluggish. A long press is detected while
+the button is still down and needs no such trade-off.
+
+Commands are passed to `/bin/sh -c`, with `STYLUS_BUTTON` (`primary` or
+`secondary`) and `STYLUS_GESTURE` (`single`, `double-click` or `long-press`)
+exported, so one command can serve every button and gesture:
 
 ```ini
-page-up=/home/me/bin/pen.sh
-page-down=/home/me/bin/pen.sh
+primary=/home/me/bin/pen.sh
+secondary=/home/me/bin/pen.sh
 ```
 
 ```sh
 # ~/bin/pen.sh
-case "$STYLUS_BUTTON" in
-    page-up)   niri msg action focus-workspace-up ;;
-    page-down) niri msg action focus-workspace-down ;;
+case "$STYLUS_BUTTON/$STYLUS_GESTURE" in
+    primary/single)        niri msg action focus-workspace-down ;;
+    primary/double-click)  niri msg action move-column-to-workspace-down ;;
+    primary/long-press)    niri msg action close-window ;;
 esac
 ```
 
