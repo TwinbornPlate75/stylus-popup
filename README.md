@@ -38,13 +38,46 @@ needs it.
 
 ## Install
 
+The build defaults to the system prefix, so `cmake --install` puts the binary
+in `/usr/bin` and the unit in `/usr/lib/systemd/user`:
+
 ```sh
 sudo cmake --install build
 ```
 
-A user-level systemd unit is provided in `packaging/stylus-popup.service`;
-install it to `~/.config/systemd/user/` and `systemctl --user enable
---now stylus-popup.service` to start at login.
+Pass `-DCMAKE_INSTALL_PREFIX=...` to install somewhere else.
+
+### systemd service
+
+The unit is a **session-scoped user unit**, not a system one. The popup is a
+Wayland client: it draws into the session, reads the session user's config and
+runs the bound button commands (`niri msg ...`) as its own children. A system
+service would have to *reconstruct* all of that - the session user, its
+`HOME`, `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY` and `NIRI_SOCKET` (which embeds
+niri's PID, so it cannot be hardcoded) - which is exactly what the user manager
+already provides, live.
+
+So the unit is packaged into `/usr/lib/systemd/user` - it ships system-wide,
+next to the rest of the package, but runs inside the session. Enable it as the
+user owning the session:
+
+```sh
+systemctl --user enable --now stylus-popup.service
+systemctl --user status stylus-popup.service
+```
+
+No `sudo` is needed for that step, and nothing is configured at build time:
+`WantedBy=graphical-session.target` plus `PartOf=` makes it start with the
+session and stop with it. The one precondition is that the session is brought
+up through `systemd --user` (true for `niri-session`); if you launch a
+compositor bare, put `stylus-popup` in your session's own autostart instead.
+
+If you previously installed a **system-wide** `stylus-popup.service`, disable
+it first - two instances would fight over the pen's input node:
+
+```sh
+sudo systemctl disable --now stylus-popup.service
+```
 
 ### Fedora / RPM-based distributions
 

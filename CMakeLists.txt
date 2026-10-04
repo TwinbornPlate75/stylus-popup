@@ -9,6 +9,14 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# ── Install layout ─────────────────────────────────────────────────────────
+# Land in the system prefix (/usr/bin, /usr/lib/systemd/user, ...) instead of
+# the CMake default of /usr/local, so a plain `cmake --install` ends up next to
+# the rest of the system. The RPM spec overrides the prefix explicitly.
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CMAKE_INSTALL_PREFIX "/usr" CACHE PATH "Install prefix" FORCE)
+endif()
+
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Gui DBus)
 
@@ -83,9 +91,26 @@ target_include_directories(stylus-popup PRIVATE
     ${WAYLAND_CLIENT_INCLUDE_DIRS}
 )
 
+# ── Install ────────────────────────────────────────────────────────────────
 include(GNUInstallDirs)
+
 install(TARGETS stylus-popup
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+# Session-scoped systemd *user* unit: packaged system-wide, started by the
+# user manager once the graphical session appears. Enable it per user with
+#   systemctl --user enable --now stylus-popup.service
+# Only the binary path is substituted, so no user has to be resolved at
+# configure time and no build machine detail leaks into the unit.
+set(STYLUS_USER_UNIT_DIR "${CMAKE_INSTALL_LIBDIR}/systemd/user" CACHE PATH
+    "Directory for the systemd user unit")
+
+configure_file(packaging/stylus-popup.service.in
+    "${CMAKE_CURRENT_BINARY_DIR}/stylus-popup.service" @ONLY)
+
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/stylus-popup.service"
+    DESTINATION ${STYLUS_USER_UNIT_DIR}
 )
 
 if(QT_VERSION_MAJOR EQUAL 6)

@@ -70,7 +70,6 @@ setup_rpmdir() {
 make_source() {
     local tarball=$RPMDIR/SOURCES/$NAME-$VERSION.tar.gz
     git archive --format=tar HEAD --prefix=$NAME-$VERSION/ | gzip > $tarball
-    cp "$REPODIR/packaging/$NAME.service" $RPMDIR/SOURCES/
     echo "Source: $tarball"
 }
 
@@ -96,7 +95,6 @@ build_rpm() {
 clean_all() {
     rm -rf $RPMDIR/{BUILD,BUILDROOT,RPMS,SRPMS}
     rm -f  $RPMDIR/SOURCES/$NAME-$VERSION.tar.gz
-    rm -f  $RPMDIR/SOURCES/$NAME.service
     rm -rf build/
     echo "Cleaned."
 }

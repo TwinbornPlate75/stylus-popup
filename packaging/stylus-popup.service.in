@@ -1,0 +1,25 @@
+[Unit]
+Description=Stylus status popup (Material Design 3)
+Documentation=https://github.com/InioX/stylus-popup
+# Session-scoped on purpose. The popup is a Wayland client: it draws a
+# layer-shell surface, reads this user's config, and runs the bound button
+# commands (`niri msg ...`) as its own children.
+#
+# By the time graphical-session.target is reached the user manager already
+# holds everything that requires: WAYLAND_DISPLAY, NIRI_SOCKET (whose name
+# embeds niri's PID) and XDG_RUNTIME_DIR are in its environment, and the
+# session user, HOME and the `input` group membership are the manager's own.
+# So nothing has to be reconstructed here - no wrapper, no baked-in user.
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/stylus-popup
+# The unit is pulled in when the session appears, so a failure here is a real
+# failure; the default rate limiter is fine.
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
