@@ -24,10 +24,10 @@ enum class StylusButton {
 QString stylusButtonName(StylusButton button);
 
 /**
- * Pen-button -> shell command mapping, read from the `[buttons]` section of
- * stylus-popup's INI config. Each button carries one command per gesture; an
- * empty command disables that gesture. The file is created with these values
- * on first run, so the defaults below double as the shipped configuration.
+ * Pen-button -> shell command mapping: the `[buttons]` section of stylus-popup's
+ * config. Each button carries one command per gesture; an empty command
+ * disables that gesture. Filled in by `AppConfig::load()`, which also writes
+ * these values out as the shipped configuration when the file is missing.
  */
 struct ButtonMapConfig {
     bool enabled = true;
@@ -45,17 +45,8 @@ struct ButtonMapConfig {
     QString secondaryDouble  = QStringLiteral("niri msg action move-column-to-workspace-up");
     QString secondaryLong    = QStringLiteral("niri msg action close-window");
 
-    /** Where the settings were read from (empty when nothing was loaded). */
-    QString sourcePath;
-
     /** Shell command bound to that gesture of that button; empty when unbound. */
     QString commandFor(StylusButton button, StylusGesture gesture) const;
-
-    /** ~/.config/stylus-popup/config.ini, or $STYLUS_POPUP_CONFIG when set. */
-    static QString defaultPath();
-
-    /** Loads the config, writing a default file when none exists yet. */
-    static ButtonMapConfig load(const QString &path = QString());
 };
 
 /**
@@ -87,7 +78,8 @@ public:
     void stop();
 
     /** Prints the input nodes this monitor would grab - `--list-input`. */
-    static void printMatchingDevices(const ButtonMapConfig &config);
+    static void printMatchingDevices(const ButtonMapConfig &config,
+                                     const QString &configPath);
 
 signals:
     void gestureTriggered(StylusButton button, StylusGesture gesture, const QString &deviceName);
@@ -152,13 +144,14 @@ private:
  * Glue between the monitor and the configured shell commands: runs the command
  * bound to a button gesture through `/bin/sh -c` and exports `STYLUS_BUTTON`
  * plus `STYLUS_GESTURE`, so a single command can serve every button and gesture.
+ * The mapping is handed in by `main()`, which reads the config file once.
  */
 class StylusButtonMapper : public QObject
 {
     Q_OBJECT
 
 public:
-    explicit StylusButtonMapper(QObject *parent = nullptr);
+    explicit StylusButtonMapper(const ButtonMapConfig &config, QObject *parent = nullptr);
     ~StylusButtonMapper() override;
 
     void start();

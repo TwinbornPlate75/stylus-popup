@@ -1,18 +1,23 @@
 #include <QApplication>
 
+#include "appconfig.h"
 #include "bluezmanager.h"
-#include "popupconfig.h"
 #include "popupwidget.h"
 #include "stylusbuttons.h"
 #include "stylusmonitor.h"
 
 int main(int argc, char *argv[])
 {
+    /* The config file is read exactly once, here. Each part of the program is
+     * handed its own section below, so there is one reader and one place to
+     * extend when a setting is added. */
+    const AppConfig config = AppConfig::load();
+
     /* Diagnostic that needs neither a Wayland session nor the popup: report
      * which input nodes the pen button mapping would grab. */
     for (int i = 1; i < argc; ++i) {
         if (qstrcmp(argv[i], "--list-input") == 0) {
-            StylusButtonMonitor::printMatchingDevices(ButtonMapConfig::load());
+            StylusButtonMonitor::printMatchingDevices(config.buttons, config.sourcePath);
             return 0;
         }
     }
@@ -21,10 +26,10 @@ int main(int argc, char *argv[])
     app.setApplicationName("stylus-popup");
     app.setQuitOnLastWindowClosed(false); // keep running even with no visible window
 
-    PopupWidget       popup(PopupConfig::load(ButtonMapConfig::defaultPath()));
+    PopupWidget       popup(config.popup);
     BluezManager      bluez;
     StylusMonitor     monitor;
-    StylusButtonMapper buttons;
+    StylusButtonMapper buttons(config.buttons);
 
     bool pairingRequested = false;
 

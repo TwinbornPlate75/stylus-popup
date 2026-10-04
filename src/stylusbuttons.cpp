@@ -1,14 +1,8 @@
 #include "stylusbuttons.h"
 
-#include "popupconfig.h"
-
 #include <QDebug>
-#include <QDir>
 #include <QFile>
-#include <QFileInfo>
 #include <QProcess>
-#include <QSettings>
-#include <QStandardPaths>
 #include <QStringList>
 #include <QTextStream>
 
@@ -32,8 +26,7 @@
 
 namespace {
 
-constexpr char kInputDir[]     = "/dev/input";
-constexpr char kButtonsGroup[] = "buttons";
+constexpr char kInputDir[] = "/dev/input";
 
 /* Which key code each side button reports. The main button sends PAGE_DOWN
  * and the secondary one PAGE_UP - the opposite of what those key names suggest,
@@ -49,12 +42,6 @@ constexpr int kSecondaryKey = KEY_PAGEUP;
 constexpr char kPenBleName[]        = "Xiaomi Smart Pen";
 constexpr char kPenKeyboardSuffix[] = " Keyboard";
 
-/* Gesture thresholds are clamped: a typo must not make the mapping unusable
- * (0 ms would let every click be swallowed as a long press, a huge value would
- * delay every click into the next session). */
-constexpr int kMinGestureMs = 50;
-constexpr int kMaxGestureMs = 10000;
-
 /** True for the two evdev node names the supported pens produce. */
 bool isStylusNodeName(const QString &name)
 {
@@ -67,105 +54,10 @@ bool isStylusNodeName(const QString &name)
         || name.compare(keyboard, Qt::CaseInsensitive) == 0;
 }
 
-/**
- * Reads a config value as text. QSettings hands back a QStringList as soon as
- * the value contains a comma, and toString() on such a value is empty - which
- * would silently drop a command like "foo --a,b". Re-joining the list
- * restores the text verbatim.
- */
-QString iniText(const QSettings &settings, const QString &key, const QString &fallback)
-{
-    const QVariant value = settings.value(key);
-    if (!value.isValid())
-        return fallback;
-
-    const QStringList parts = value.toStringList();
-    return parts.size() > 1 ? parts.join(QLatin1Char(',')) : value.toString();
-}
-
-/** Reads a gesture threshold in ms; an unparsable value keeps the default. */
-int iniMilliseconds(const QSettings &settings, const QString &key, int fallback)
-{
-    bool ok = false;
-    const int value = settings.value(key).toInt(&ok);
-    return ok ? qBound(kMinGestureMs, value, kMaxGestureMs) : fallback;
-}
-
 /** An empty command means "gesture disabled" - make that visible in the output. */
 QString orUnbound(const QString &command)
 {
     return command.isEmpty() ? QStringLiteral("(unbound)") : command;
-}
-
-/**
- * Writes the shipped defaults with a short explanation, so the settings can be
- * discovered and edited without reading the source. The file holds the popup's
- * section too: it is created here, and this is the only writer, so the popup
- * can stay a reader.
- */
-bool writeDefaultConfig(const ButtonMapConfig &config)
-{
-    const QFileInfo info(config.sourcePath);
-    if (!QDir().mkpath(info.absolutePath())) {
-        qWarning("StylusButtonMapper: cannot create %s", qPrintable(info.absolutePath()));
-        return false;
-    }
-
-    QFile file(config.sourcePath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        qWarning("StylusButtonMapper: cannot write %s: %s",
-                 qPrintable(config.sourcePath), qPrintable(file.errorString()));
-        return false;
-    }
-
-    QTextStream out(&file);
-    out << "# stylus-popup configuration.\n"
-           "#\n"
-           "# Both side buttons of the stylus arrive over Bluetooth HID as ordinary\n"
-           "# keyboard keys: the main button sends PAGE_DOWN, the secondary one\n"
-           "# PAGE_UP. They are named after the pen, not after the key, so\n"
-           "# \"primary\" is the main button and \"secondary\" the other one.\n"
-           "# stylus-popup grabs them so they no longer reach the focused window,\n"
-           "# and runs the matching command through /bin/sh -c with STYLUS_BUTTON\n"
-           "# (\"primary\" or \"secondary\") and STYLUS_GESTURE\n"
-           "# (\"single\", \"double-click\" or \"long-press\") exported.\n"
-           "#\n"
-           "# Each button has three gestures: <button> is a single click,\n"
-           "# <button>-double-click is a second click within double-click-ms, and\n"
-           "# <button>-long-press is a press held for long-press-ms. One press\n"
-           "# produces at most one gesture. An empty command disables that gesture.\n"
-           "# Whether a click is the first of two can only be known once the click\n"
-           "# window has passed, so every click pays double-click-ms.\n"
-           "\n"
-           "[buttons]\n"
-           "# Set to false to leave the buttons alone.\n"
-           "enabled=true\n"
-           "# Grab the input node exclusively, swallowing the key stroke.\n"
-           "grab=true\n"
-           "# Also fire the mapped command on key auto-repeat while the button is\n"
-           "# held: the repeat re-runs the gesture the hold resolved to.\n"
-           "repeat=false\n"
-           "# Click window, and how long a press has to be held.\n"
-           "double-click-ms=" << config.doubleClickMs << "\n"
-           "long-press-ms=" << config.longPressMs << "\n"
-           "\n"
-           "primary=" << config.primaryCommand << "\n"
-           "primary-double-click=" << config.primaryDouble << "\n"
-           "primary-long-press=" << config.primaryLong << "\n"
-           "secondary=" << config.secondaryCommand << "\n"
-           "secondary-double-click=" << config.secondaryDouble << "\n"
-           "secondary-long-press=" << config.secondaryLong << "\n"
-           "\n"
-           "[popup]\n"
-           "# How long the pen has to connect after it attaches. When the wait\n"
-           "# runs out the popup slides away and the pending attempt is dropped\n"
-           "# until the pen is attached again. 0 waits forever.\n"
-           "connect-timeout-ms=" << PopupConfig::kDefaultConnectTimeoutMs << "\n";
-    file.close();
-
-    qInfo("StylusButtonMapper: wrote the default configuration to %s",
-          qPrintable(config.sourcePath));
-    return true;
 }
 
 /** Names of the evdev nodes under /dev/input, sorted. */
@@ -241,18 +133,6 @@ QString stylusButtonName(StylusButton button)
 
 /* ── ButtonMapConfig ─────────────────────────────────────────────────────── */
 
-QString ButtonMapConfig::defaultPath()
-{
-    const QByteArray override = qgetenv("STYLUS_POPUP_CONFIG");
-    if (!override.isEmpty())
-        return QString::fromLocal8Bit(override);
-
-    QString base = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
-    if (base.isEmpty())
-        base = QDir::homePath() + QStringLiteral("/.config");
-    return base + QStringLiteral("/stylus-popup/config.ini");
-}
-
 QString ButtonMapConfig::commandFor(StylusButton button, StylusGesture gesture) const
 {
     switch (gesture) {
@@ -264,37 +144,6 @@ QString ButtonMapConfig::commandFor(StylusButton button, StylusGesture gesture) 
         return button == StylusButton::Primary ? primaryLong : secondaryLong;
     }
     return QString();
-}
-
-ButtonMapConfig ButtonMapConfig::load(const QString &path)
-{
-    ButtonMapConfig config;
-    config.sourcePath = path.isEmpty() ? defaultPath() : path;
-
-    const bool existed = QFileInfo::exists(config.sourcePath);
-
-    if (existed) {
-        QSettings settings(config.sourcePath, QSettings::IniFormat);
-        settings.beginGroup(kButtonsGroup);
-        config.enabled         = settings.value("enabled", config.enabled).toBool();
-        config.grab            = settings.value("grab",    config.grab).toBool();
-        config.repeat          = settings.value("repeat",  config.repeat).toBool();
-        config.doubleClickMs   = iniMilliseconds(settings, "double-click-ms", config.doubleClickMs);
-        config.longPressMs     = iniMilliseconds(settings, "long-press-ms", config.longPressMs);
-        config.primaryCommand   = iniText(settings, "primary", config.primaryCommand);
-        config.primaryDouble    = iniText(settings, "primary-double-click", config.primaryDouble);
-        config.primaryLong      = iniText(settings, "primary-long-press", config.primaryLong);
-        config.secondaryCommand = iniText(settings, "secondary", config.secondaryCommand);
-        config.secondaryDouble  = iniText(settings, "secondary-double-click", config.secondaryDouble);
-        config.secondaryLong    = iniText(settings, "secondary-long-press", config.secondaryLong);
-        settings.endGroup();
-
-        qInfo("StylusButtonMapper: loaded button mapping from %s", qPrintable(config.sourcePath));
-    } else if (!writeDefaultConfig(config)) {
-        qWarning("StylusButtonMapper: falling back to built-in button mapping defaults");
-    }
-
-    return config;
 }
 
 /* ── StylusButtonMonitor ─────────────────────────────────────────────────── */
@@ -362,8 +211,8 @@ void StylusButtonMonitor::stop()
 void StylusButtonMonitor::run()
 {
     if (!m_config.enabled) {
-        qInfo("StylusButtonMonitor: button mapping disabled in %s",
-              qPrintable(m_config.sourcePath));
+        qInfo("StylusButtonMonitor: button mapping is disabled by the config "
+              "(enabled=false)");
         return;
     }
 
@@ -610,9 +459,9 @@ void StylusButtonMonitor::closeNode(Node &node)
 
 /* ── StylusButtonMapper ──────────────────────────────────────────────────── */
 
-StylusButtonMapper::StylusButtonMapper(QObject *parent)
+StylusButtonMapper::StylusButtonMapper(const ButtonMapConfig &config, QObject *parent)
     : QObject(parent)
-    , m_config(ButtonMapConfig::load())
+    , m_config(config)
     , m_monitor(new StylusButtonMonitor(m_config, this))
 {
     connect(m_monitor, &StylusButtonMonitor::gestureTriggered,
@@ -662,13 +511,12 @@ void StylusButtonMapper::onGestureTriggered(StylusButton button, StylusGesture g
 
 /* ── Diagnostics ─────────────────────────────────────────────────────────── */
 
-void StylusButtonMonitor::printMatchingDevices(const ButtonMapConfig &config)
+void StylusButtonMonitor::printMatchingDevices(const ButtonMapConfig &config,
+                                               const QString &configPath)
 {
     QTextStream out(stdout);
     out << "stylus-popup button mapping\n"
-        << "  config        : "
-        << (config.sourcePath.isEmpty() ? QStringLiteral("(built-in defaults)")
-                                        : config.sourcePath) << "\n"
+        << "  config        : " << configPath << "\n"
         << "  enabled       : " << yesNo(config.enabled) << "\n"
         << "  grab          : " << yesNo(config.grab) << "\n"
         << "  repeat        : " << yesNo(config.repeat) << "\n"

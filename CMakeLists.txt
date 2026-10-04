@@ -59,7 +59,8 @@ set(PROJECT_SOURCES
     src/popupwidget.h
     src/popupwidget.cpp
     src/popupconfig.h
-    src/popupconfig.cpp
+    src/appconfig.h
+    src/appconfig.cpp
     src/colortheme.h
     src/colortheme.cpp
     src/bluezmanager.h
