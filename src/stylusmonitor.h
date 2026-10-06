@@ -17,20 +17,6 @@ struct StylusState {
     QString     macAddress;
     bool        macValid  = false;
     StylusPhase phase     = StylusPhase::Complete;
-
-    bool operator==(const StylusState &other) const {
-        return attached == other.attached
-            && charging == other.charging
-            && capacity == other.capacity
-            && limit == other.limit
-            && macAddress == other.macAddress
-            && macValid == other.macValid
-            && phase == other.phase;
-    }
-
-    bool operator!=(const StylusState &other) const {
-        return !(*this == other);
-    }
 };
 
 class StylusMonitor : public QThread

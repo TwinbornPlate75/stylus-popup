@@ -13,6 +13,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <cerrno>
 #include <cstring>
 
 /*
@@ -34,8 +35,6 @@ static const wl_buffer_listener s_bufferListener = {
     }
 };
 
-/* anonymous fd helper */
-
 static bool flushDisplay(wl_display *display)
 {
     while (wl_display_flush(display) < 0) {
@@ -45,6 +44,8 @@ static bool flushDisplay(wl_display *display)
     return true;
 }
 
+/** A writable fd of `size` bytes backed by anonymous shared memory: a memfd
+ *  where the kernel has one, a hand-named object under /dev/shm otherwise. */
 static int makeAnonFd(int size)
 {
 #ifdef __NR_memfd_create

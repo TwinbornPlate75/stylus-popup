@@ -35,6 +35,34 @@ constexpr qreal kPulseKick = 1.6;
 constexpr qreal kRevealAt = 0.6;
 constexpr qreal kVanishAt = 0.85;
 
+/* A compact pill is a 20 px leading box - the spinner or the error badge -
+ * then a 10 px gap and the label, with a 12 px pad at the end. */
+constexpr qreal kCompactIcon = 20.0;
+constexpr qreal kCompactGap  = 10.0;
+constexpr qreal kCompactPad  = 12.0;
+
+/** The two boxes a compact pill is laid out from. */
+struct CompactRow {
+    QRectF leading;  /* the spinner or the error badge */
+    QRectF text;     /* the label column; the label elides into it */
+};
+
+/** Both compact forms are laid out the same way, so the geometry is defined
+ *  once: the leading box sits `inset` in from the rounded end, which puts its
+ *  centre on the end's centre, and the label takes what is left. */
+CompactRow compactRowFor(const QRectF &r)
+{
+    const qreal inset = (r.height() - kCompactIcon) / 2;
+
+    CompactRow row;
+    row.leading = QRectF(r.left() + inset, r.center().y() - kCompactIcon / 2,
+                         kCompactIcon, kCompactIcon);
+    row.text = QRectF(row.leading.right() + kCompactGap, r.top(),
+                      r.right() - row.leading.right() - kCompactGap - kCompactPad,
+                      r.height());
+    return row;
+}
+
 QColor withAlpha(QColor c, qreal alpha)
 {
     c.setAlphaF(alpha);
@@ -475,10 +503,13 @@ void PopupWidget::setMode(IslandMode mode)
 
 qreal PopupWidget::compactWidthFor(const QString &text) const
 {
-    /* pad + 20 px icon + gap + text + trailing pad, with the icon concentric
-     * to the rounded end: (36 / 2) - 8 = 10 = icon radius. */
+    /* The same row the painters lay out, measured instead of drawn: leading
+     * inset + icon + gap + label + trailing pad. The 4 px on top are slack, so
+     * a label that outgrows its column elides before it touches the pad. */
     const QFontMetricsF fm(m_compactFont);
-    return 8 + 20 + 10 + fm.horizontalAdvance(text) + 16;
+    const qreal inset = (kCompactHeight - kCompactIcon) / 2;
+    return inset + kCompactIcon + kCompactGap + fm.horizontalAdvance(text)
+         + kCompactPad + 4;
 }
 
 void PopupWidget::applyShapeFor(Content content)
@@ -686,32 +717,26 @@ void PopupWidget::paintIsland(QPainter &p)
 
 void PopupWidget::paintConnecting(QPainter &p, const QRectF &r)
 {
-    const qreal pad = (r.height() - 20) / 2;
-    const QRectF spinner(r.left() + pad, r.center().y() - 10, 20, 20);
-    drawSpinner(p, spinner);
+    const CompactRow row = compactRowFor(r);
+    drawSpinner(p, row.leading);
 
     p.setFont(m_compactFont);
     p.setPen(m_theme.onSurfaceVariant());
-    const QRectF text(spinner.right() + 10, r.top(),
-                      r.right() - spinner.right() - 10 - 12, r.height());
-    p.drawText(text, Qt::AlignLeft | Qt::AlignVCenter, IslandStrings::connecting());
+    p.drawText(row.text, Qt::AlignLeft | Qt::AlignVCenter, IslandStrings::connecting());
 }
 
 void PopupWidget::paintError(QPainter &p, const QRectF &r)
 {
-    const qreal pad = (r.height() - 20) / 2;
-    const QRectF icon(r.left() + pad, r.center().y() - 10, 20, 20);
+    const CompactRow row = compactRowFor(r);
 
     p.setPen(Qt::NoPen);
     p.setBrush(withAlpha(m_theme.error(), 0.18));
-    p.drawEllipse(icon);
-    drawCross(p, icon.adjusted(6.5, 6.5, -6.5, -6.5), m_theme.error());
+    p.drawEllipse(row.leading);
+    drawCross(p, row.leading.adjusted(6.5, 6.5, -6.5, -6.5), m_theme.error());
 
     p.setFont(m_compactFont);
     p.setPen(m_theme.onSurface());
-    const QRectF text(icon.right() + 10, r.top(),
-                      r.right() - icon.right() - 10 - 12, r.height());
-    p.drawText(text, Qt::AlignLeft | Qt::AlignVCenter, m_errorText);
+    p.drawText(row.text, Qt::AlignLeft | Qt::AlignVCenter, m_errorText);
 }
 
 void PopupWidget::paintBattery(QPainter &p, const QRectF &r)

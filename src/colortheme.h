@@ -13,7 +13,6 @@ public:
 
     bool loadFromQt6ct();
 
-    const QColor &surface()          const { return m_surface; }
     const QColor &onSurface()        const { return m_onSurface; }
     const QColor &onSurfaceVariant() const { return m_onSurfaceVariant; }
     const QColor &primary()          const { return m_primary; }
