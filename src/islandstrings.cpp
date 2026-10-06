@@ -20,7 +20,8 @@ QString pick(const char *zh, const char *en)
 namespace IslandStrings {
 
 QString connecting()      { return pick("连接中…", "Connecting…"); }
-QString connected()       { return pick("已连接", "Connected"); }
+QString paired()          { return pick("已配对", "Paired"); }
+QString notPaired()       { return pick("未配对", "Not paired"); }
 QString charging()        { return pick("正在充电", "Charging"); }
 QString connectFailed()   { return pick("连接失败", "Connection failed"); }
 QString connectTimedOut() { return pick("连接超时", "Timed out"); }

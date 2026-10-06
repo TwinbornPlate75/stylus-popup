@@ -9,7 +9,8 @@
 namespace IslandStrings {
 
 QString connecting();
-QString connected();
+QString paired();
+QString notPaired();
 QString charging();
 QString chargeLimit(int percent);
 QString connectFailed();

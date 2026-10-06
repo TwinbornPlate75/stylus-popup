@@ -30,7 +30,13 @@ signals:
      */
     void attemptStarted();
 
-    void pairedAndConnected(const QString &macAddress);
+    /**
+     * The pen is paired. Sent both for a pen BlueZ already knows (nothing is
+     * connected on that path - being paired is all that is established) and for
+     * one that has just been paired and connected.
+     */
+    void paired(const QString &macAddress);
+
     void pairingFailed(const QString &macAddress, const QString &error);
 
 private slots:

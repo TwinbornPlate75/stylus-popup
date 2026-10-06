@@ -20,6 +20,7 @@ public:
     const QColor &progressTrack()    const { return m_progressTrack; }
     const QColor &lowBattery()       const { return m_lowBattery; }
     const QColor &charging()         const { return m_charging; }
+    const QColor &warning()          const { return m_warning; }
 
     /* Derived roles, recomputed whenever the palette is (re)loaded. */
     const QColor &islandFill()       const { return m_islandFill; }
@@ -38,6 +39,7 @@ private:
     QColor m_progressTrack;
     QColor m_lowBattery;
     QColor m_charging;
+    QColor m_warning;
     QColor m_islandFill;
     QColor m_outline;
 };

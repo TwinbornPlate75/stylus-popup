@@ -22,6 +22,7 @@ ColorTheme::ColorTheme(QObject *parent)
     , m_progressTrack("#49454F")
     , m_lowBattery("#FF6E6E")
     , m_charging("#79FFC1")
+    , m_warning("#FFC24A")
 {
     deriveRoles();
 }
@@ -83,6 +84,7 @@ void ColorTheme::loadFrom(const QString &path)
     m_progressTrack    = get("Colors:View/BackgroundAlternate",   m_progressTrack);
     m_lowBattery       = get("Colors:Button/BackgroundNegative",  m_lowBattery);
     m_charging         = get("Colors:Button/BackgroundPositive",  m_charging);
+    m_warning          = get("Colors:Button/BackgroundNeutral",   m_warning);
 
     deriveRoles();
 }

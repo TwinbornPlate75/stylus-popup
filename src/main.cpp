@@ -53,8 +53,8 @@ int main(int argc, char *argv[])
     QObject::connect(&bluez, &BluezManager::attemptStarted,
                      &popup, &PopupWidget::onConnectAttemptStarted,
                      Qt::QueuedConnection);
-    QObject::connect(&bluez, &BluezManager::pairedAndConnected,
-                     &popup, &PopupWidget::onBtConnected,
+    QObject::connect(&bluez, &BluezManager::paired,
+                     &popup, &PopupWidget::onBtPaired,
                      Qt::QueuedConnection);
     QObject::connect(&bluez, &BluezManager::pairingFailed,
                      &popup, &PopupWidget::onBtConnectionFailed,

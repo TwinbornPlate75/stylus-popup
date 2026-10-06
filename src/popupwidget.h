@@ -43,7 +43,7 @@ public slots:
      */
     void onConnectAttemptStarted();
 
-    void onBtConnected();
+    void onBtPaired();
     void onBtConnectionFailed(const QString &error);
 
 signals:
@@ -65,7 +65,12 @@ private:
 
     /* ── state machine (what to show) ── */
     bool isShown() const { return m_mode != IslandMode::Hidden; }
-    bool canShowFinal() const;
+
+    /** The pen is seated and the driver is reporting, so the expanded battery
+     *  view has real numbers in it. Whether the pen is also paired is a
+     *  separate fact: the one the status chip carries. */
+    bool isSeated() const;
+
     void present();
     void collapse();
     void showError(const QString &message);
@@ -124,7 +129,10 @@ private:
     QTimer             *m_connectTimer;
     QTimer             *m_errorTimer;
     StylusState         m_state;
-    bool                m_btConnected = false;
+    /* The pen's pairing state, and the only thing BlueZ is asked about. It is
+     * dropped on every attach - a fresh seat has to earn it again, which is
+     * what leaves the chip showing "not paired" while a pen is being paired. */
+    bool                m_btPaired = false;
     bool                m_gaveUp = false;
     int                 m_connectTimeoutMs = PopupConfig::kDefaultConnectTimeoutMs;
     int                 m_screenW = 1080;

@@ -12,8 +12,9 @@ a double click and a long press each getting its own command.
 
 | Pen state | Island |
 | --- | --- |
-| Attached, pairing still in flight | Compact pill: MD3 progress indicator and `Connecting…` |
-| Attached, paired and connected | Expanded pill: battery ring, capacity, `Charging` / `Connected` with the charge limit, and a bolt chip while charging |
+| Attached, driver not reporting yet | Compact pill: MD3 progress indicator and `Connecting…` |
+| Attached and reporting, not paired | Expanded pill with the battery, and an amber Bluetooth mark: `Not paired` |
+| Attached and reporting, paired | Expanded pill: battery ring, capacity, `Charging` / `Paired` with the charge limit, and a status chip: a bolt while charging, the Bluetooth mark otherwise |
 | Pairing failed or timed out | Compact pill with an error icon; shakes, then goes away |
 | Detached | Shrinks back into a dot and disappears |
 
@@ -22,7 +23,11 @@ between its forms on spring physics: the old content fades out, the shape
 morphs, and the new content fades in once the shape has mostly arrived. Inner
 elements are concentric with the rounded outline. A change in charging state
 gives the island a short pulse, and the battery ring follows the capacity
-smoothly. The expanded island collapses again a few seconds after it appears.
+smoothly. The expanded island collapses again a few seconds after it appears;
+while the pen is still unpaired it is the connect wait that ends it instead,
+since the pill has something to say about that and waits it out. The status
+chip carries the pairing state: the Bluetooth mark takes the theme accent once
+BlueZ knows the pen, and turns amber until then.
 
 Colours follow the matugen-generated qt6ct scheme
 (`~/.config/qt6ct/colors/matugen.conf`) and update live when that file
@@ -131,11 +136,11 @@ connect-timeout-ms=15000
 An empty command disables that gesture. Both thresholds are clamped to
 50-10000 ms, and a value that is not a number keeps the default.
 
-`connect-timeout-ms` in `[popup]` is how long the pen has to connect after it
-attaches. When the wait runs out the popup slides away and the pending attempt
-is dropped, so nothing retries it until the pen is attached again; `0` waits
-forever. It is clamped to 0-600000 ms, and a value that is not a number keeps
-the default.
+`connect-timeout-ms` in `[popup]` is how long the popup waits for the pen to be
+paired after it attaches. When the wait runs out the pill says so and slides
+away, and the pending attempt is dropped, so nothing retries it until the pen is
+attached again; `0` waits forever. It is clamped to 0-600000 ms, and a value
+that is not a number keeps the default.
 
 A command is handed to `/bin/sh -c` with `STYLUS_BUTTON` (`primary` or
 `secondary`) and `STYLUS_GESTURE` (`single`, `double-click`, `long-press`)

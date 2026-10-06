@@ -118,7 +118,7 @@ void BluezManager::onManagedObjectsReply(QDBusPendingCallWatcher *watcher)
     if (deviceFound) {
         if (alreadyPaired) {
             qInfo("BluezManager: device %s is already paired", qPrintable(m_pendingMac));
-            emit pairedAndConnected(m_pendingMac);
+            emit paired(m_pendingMac);
             finish();
             return;
         }
@@ -197,7 +197,7 @@ void BluezManager::onInterfacesAdded(const QDBusObjectPath &path,
 
     if (props.value("Paired").toBool()) {
         qInfo("BluezManager: device %s is already paired", qPrintable(m_pendingMac));
-        emit pairedAndConnected(m_pendingMac);
+        emit paired(m_pendingMac);
         finish();
         return;
     }
@@ -290,7 +290,7 @@ void BluezManager::onConnectReply(QDBusPendingCallWatcher *watcher)
         emit pairingFailed(m_pendingMac, reply.error().message());
     } else {
         qInfo("BluezManager: connect succeeded for %s", qPrintable(m_pendingMac));
-        emit pairedAndConnected(m_pendingMac);
+        emit paired(m_pendingMac);
     }
 
     finish();

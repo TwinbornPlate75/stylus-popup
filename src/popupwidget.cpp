@@ -101,6 +101,43 @@ void drawBolt(QPainter &p, const QRectF &box, const QColor &color)
     p.restore();
 }
 
+/* The Bluetooth rune, on the 24-unit grid icon sets draw it on, so its
+ * proportions hold at chip size. The two notches on the right-hand legs are
+ * sub-paths: odd-even filling is what punches them out. */
+void drawBluetooth(QPainter &p, const QRectF &box, const QColor &color)
+{
+    static const qreal kRune[][2] = {
+        {17.71, 7.71}, {12.00, 2.00}, {11.00, 2.00}, {11.00, 9.59},
+        {6.41, 5.00},  {5.00, 6.41},  {10.59, 12.00}, {5.00, 17.59},
+        {6.41, 19.00}, {11.00, 14.41}, {11.00, 22.00}, {12.00, 22.00},
+        {17.71, 16.29}, {13.41, 12.00},
+    };
+    static const qreal kNotchUpper[][2] = {{13.00, 5.83}, {14.88, 7.71}, {13.00, 9.59}};
+    static const qreal kNotchLower[][2] = {{14.88, 16.29}, {13.00, 18.17}, {13.00, 14.41}};
+
+    const qreal unit = box.width() / 24.0;
+    auto mapped = [&box, unit](const qreal pt[2]) {
+        return QPointF(box.left() + pt[0] * unit, box.top() + pt[1] * unit);
+    };
+    auto subPath = [&mapped](const qreal (*pts)[2], size_t count) {
+        QPainterPath path(mapped(pts[0]));
+        for (size_t i = 1; i < count; ++i)
+            path.lineTo(mapped(pts[i]));
+        path.closeSubpath();
+        return path;
+    };
+
+    QPainterPath rune = subPath(kRune, std::size(kRune));
+    rune.addPath(subPath(kNotchUpper, std::size(kNotchUpper)));
+    rune.addPath(subPath(kNotchLower, std::size(kNotchLower)));
+
+    p.save();
+    p.setPen(Qt::NoPen);
+    p.setBrush(color);
+    p.drawPath(rune);
+    p.restore();
+}
+
 void drawCross(QPainter &p, const QRectF &box, const QColor &color)
 {
     p.save();
@@ -208,23 +245,20 @@ PopupWidget::PopupWidget(const PopupConfig &config, QObject *parent)
 
 /* ── state machine ─────────────────────────────────────────────────────── */
 
-bool PopupWidget::canShowFinal() const
+bool PopupWidget::isSeated() const
 {
-    return m_state.attached
-        && m_state.phase == StylusPhase::Complete
-        && m_btConnected;
+    return m_state.attached && m_state.phase == StylusPhase::Complete;
 }
 
 void PopupWidget::showState(const StylusState &state)
 {
-    const bool wasFinal    = canShowFinal();
     const bool wasCharging = m_state.charging;
 
     m_state = state;
     m_dismissTimer->stop();
 
     if (!state.attached) {
-        m_btConnected = false;
+        m_btPaired = false;
         endWaiting(false);  /* the pen detached: a fresh attach may wait again */
         return;
     }
@@ -238,7 +272,7 @@ void PopupWidget::showState(const StylusState &state)
     if (state.phase == StylusPhase::Attaching) {
         if (m_gaveUp)
             qInfo("PopupWidget: the pen was seated again, so the wait starts over");
-        m_btConnected = false;
+        m_btPaired = false;
         m_gaveUp = false;
     }
 
@@ -250,24 +284,28 @@ void PopupWidget::showState(const StylusState &state)
         return;
     }
 
-    if (canShowFinal() && !wasFinal) {
-        setMode(IslandMode::Expanded);
-        return;
-    }
+    /* The dock reports capacity and charging whether or not the pen is paired,
+     * so the expanded view is everything the pen has to say. Pairing is the
+     * part BlueZ knows, and the status chip is what says it: worth showing for
+     * a pen that is sitting there unpaired, and it covers a fresh pen being
+     * paired too - the driver reaches its complete stage long before BlueZ is
+     * done with it. */
+    setMode(isSeated() ? IslandMode::Expanded : IslandMode::Compact);
 
-    if (canShowFinal())
+    /* Paired: nothing left to wait for, so the pill lingers a moment and then
+     * leaves. Unpaired: the deadline owns it, and a dismiss timer would cut
+     * that short. */
+    m_dismissTimer->stop();
+    if (m_btPaired) {
         m_connectTimer->stop();
-    else if (!m_connectTimer->isActive())
+        m_dismissTimer->start();
+    } else if (!m_connectTimer->isActive()) {
         armConnectTimer();
-
-    setMode(canShowFinal() ? IslandMode::Expanded : IslandMode::Compact);
+    }
 
     if (m_content == Content::Battery && state.charging != wasCharging)
         m_pulse.velocity += kPulseKick;
     startFrames();  /* new values to draw */
-
-    if (canShowFinal())
-        m_dismissTimer->start();
 }
 
 void PopupWidget::onConnectAttemptStarted()
@@ -285,20 +323,24 @@ void PopupWidget::onConnectAttemptStarted()
 
     if (!isShown() || m_mode == IslandMode::Error)
         present();
-    else if (!canShowFinal() && !m_connectTimer->isActive())
+    else if (!m_btPaired && !m_connectTimer->isActive())
         armConnectTimer();
 }
 
-void PopupWidget::onBtConnected()
+void PopupWidget::onBtPaired()
 {
     if (!m_state.attached)
         return;
 
-    m_btConnected = true;
+    m_btPaired = true;
     m_gaveUp = false;
     m_connectTimer->stop();
-    if (canShowFinal())
-        setMode(IslandMode::Expanded);
+
+    if (isSeated())
+        setMode(IslandMode::Expanded);  /* shows the pill, or just recolours it */
+    if (isShown())
+        m_dismissTimer->start();        /* nothing left to wait for */
+    startFrames();
 }
 
 void PopupWidget::onBtConnectionFailed(const QString &error)
@@ -316,13 +358,19 @@ void PopupWidget::onConnectTimeout()
              m_connectTimeoutMs);
 
     emit connectTimedOut();
-    endWaiting(true, canShowFinal() ? QString() : IslandStrings::connectTimedOut());
+    endWaiting(true, m_btPaired ? QString() : IslandStrings::connectTimedOut());
 }
 
 void PopupWidget::present()
 {
-    setMode(canShowFinal() ? IslandMode::Expanded : IslandMode::Compact);
-    armConnectTimer();
+    setMode(isSeated() ? IslandMode::Expanded : IslandMode::Compact);
+
+    if (m_btPaired) {
+        m_connectTimer->stop();
+        m_dismissTimer->start();
+    } else {
+        armConnectTimer();
+    }
 }
 
 void PopupWidget::armConnectTimer()
@@ -346,7 +394,9 @@ void PopupWidget::endWaiting(bool gaveUp, const QString &reason)
     if (!isShown())
         return;
 
-    if (!reason.isEmpty() && m_mode != IslandMode::Expanded)
+    /* A reason is worth spelling out only while the pen is not paired: a paired
+     * pen has nothing to complain about, and the pill just goes away. */
+    if (!reason.isEmpty() && !m_btPaired)
         showError(reason);
     else
         collapse();
@@ -673,24 +723,37 @@ void PopupWidget::paintBattery(QPainter &p, const QRectF &r)
     const QRectF ring(r.left() + pad, r.center().y() - ringD / 2, ringD, ringD);
     drawBatteryRing(p, ring);
 
-    /* Trailing: a charging chip, concentric in the same way. */
+    /* Trailing: the status chip, concentric in the same way. The slot is always
+     * drawn - only the glyph changes - so the capsule's right end stays anchored
+     * whether or not the pen charges, and the centre column keeps one width.
+     * It carries the pairing state: the rune is tinted while the pen is paired
+     * and turns amber while it is not. */
     const qreal chipPad = 20;
     const qreal chipD = qMax(16.0, r.height() - 2 * chipPad);
     const QRectF chip(r.right() - chipPad - chipD, r.center().y() - chipD / 2, chipD, chipD);
-    if (m_state.charging) {
-        p.setPen(Qt::NoPen);
-        p.setBrush(withAlpha(m_theme.charging(), 0.18));
-        p.drawEllipse(chip);
-        const qreal inset = chipD * 0.25;
-        drawBolt(p, chip.adjusted(inset, inset, -inset, -inset), m_theme.charging());
-    }
+
+    const QColor chipColor = m_state.charging ? m_theme.charging()
+                          : (m_btPaired ? m_theme.primary() : m_theme.warning());
+    p.setPen(Qt::NoPen);
+    p.setBrush(withAlpha(chipColor, m_state.charging ? 0.18 : 0.14));
+    p.drawEllipse(chip);
+
+    /* The bolt fills its box; the rune's ink covers only 20 of the 24 units of
+     * its grid, so its box is inset less to land at the same optical size. */
+    const qreal inset = chipD * (m_state.charging ? 0.25 : 0.21);
+    const QRectF glyph = chip.adjusted(inset, inset, -inset, -inset);
+    if (m_state.charging)
+        drawBolt(p, glyph, chipColor);
+    else
+        drawBluetooth(p, glyph, chipColor);
 
     /* Centre: percentage over a one-line status. */
     const qreal textLeft  = ring.right() + 14;
-    const qreal textRight = m_state.charging ? chip.left() - 12 : r.right() - 24;
+    const qreal textRight = chip.left() - 12;
     const qreal textW     = qMax(0.0, textRight - textLeft);
 
-    QString status = m_state.charging ? IslandStrings::charging() : IslandStrings::connected();
+    QString status = m_state.charging ? IslandStrings::charging()
+                   : (m_btPaired ? IslandStrings::paired() : IslandStrings::notPaired());
     if (m_state.limit > 0 && m_state.limit <= 100)
         status += QStringLiteral(" · ") + IslandStrings::chargeLimit(m_state.limit);
 
