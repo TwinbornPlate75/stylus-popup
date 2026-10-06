@@ -54,14 +54,19 @@ static int makeAnonFd(int size)
         close(fd);
     }
 #endif
+    /* shm_open expands no template, so the placeholder characters are filled in
+     * by hand. Both offsets follow from the literal, which keeps them in step
+     * with it - and leaves the terminating NUL alone. */
     char name[] = "/layer-shm-XXXXXX";
+    constexpr size_t kPlaceholderAt  = sizeof("/layer-shm-") - 1;
+    constexpr size_t kPlaceholderLen = sizeof(name) - 1 - kPlaceholderAt;
     {
         int rnd = open("/dev/urandom", O_RDONLY);
         if (rnd >= 0) {
-            ssize_t n = read(rnd, name + 12, 6);
+            ssize_t n = read(rnd, name + kPlaceholderAt, kPlaceholderLen);
             close(rnd);
-            if (n == 6) {
-                for (int i = 12; i < 18; ++i)
+            if (n == static_cast<ssize_t>(kPlaceholderLen)) {
+                for (size_t i = kPlaceholderAt; i < kPlaceholderAt + kPlaceholderLen; ++i)
                     name[i] = 'a' + (name[i] & 0xf);
             }
         }
