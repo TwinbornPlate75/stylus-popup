@@ -21,9 +21,15 @@ public:
     const QColor &lowBattery()       const { return m_lowBattery; }
     const QColor &charging()         const { return m_charging; }
 
+    /* Derived roles, recomputed whenever the palette is (re)loaded. */
+    const QColor &islandFill()       const { return m_islandFill; }
+    const QColor &outline()          const { return m_outline; }
+    const QColor &error()            const { return m_lowBattery; }
+
 private:
     QStringList candidatePaths() const;
     void loadFrom(const QString &path);
+    void deriveRoles();
 
     QColor m_surface;
     QColor m_onSurface;
@@ -32,4 +38,6 @@ private:
     QColor m_progressTrack;
     QColor m_lowBattery;
     QColor m_charging;
+    QColor m_islandFill;
+    QColor m_outline;
 };

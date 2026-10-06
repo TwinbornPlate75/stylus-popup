@@ -59,6 +59,9 @@ set(PROJECT_SOURCES
     src/popupwidget.h
     src/popupwidget.cpp
     src/popupconfig.h
+    src/spring.h
+    src/islandstrings.h
+    src/islandstrings.cpp
     src/appconfig.h
     src/appconfig.cpp
     src/colortheme.h

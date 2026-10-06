@@ -1,115 +1,138 @@
 #include "popupwidget.h"
 
+#include "islandstrings.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileSystemWatcher>
+#include <QFontMetricsF>
 #include <QGuiApplication>
 #include <QPainter>
 #include <QPainterPath>
 #include <QScreen>
+#include <QtMath>
 
-static void drawSpinner(QPainter &p, const QRect &r, int angle, const QColor &color);
+#include <iterator>
 
-static QString stylusNameForMac(const QString &mac, bool macValid)
+namespace {
+
+/* Spring presets: (stiffness, damping). A damping ratio of
+ * c / (2 * sqrt(k)) below 1 overshoots a little, 1 arrives without bounce. */
+constexpr qreal kMorphK  = 380, kMorphC  = 26;   /* ζ ≈ 0.67: growing shapes */
+constexpr qreal kSettleK = 420, kSettleC = 41;   /* ζ ≈ 1:    shrinking away */
+constexpr qreal kFadeK   = 600, kFadeC   = 49;   /* ζ ≈ 1:    content fades */
+constexpr qreal kShakeK  = 900, kShakeC  = 12;   /* ζ ≈ 0.2:  error shake   */
+constexpr qreal kPulseK  = 500, kPulseC  = 22;   /* ζ ≈ 0.5:  charging pulse */
+constexpr qreal kFillK   = 120, kFillC   = 22;   /* ζ ≈ 1:    battery ring  */
+
+/* Initial velocities that give the feedback motions their size: about ±8 px
+ * for the shake and about +4 % for the pulse. */
+constexpr qreal kShakeKick = 260.0;
+constexpr qreal kPulseKick = 1.6;
+
+/* Content reveals once the shape is this far along its morph, and the dot
+ * starts to vanish once a collapsing shape is this far along. */
+constexpr qreal kRevealAt = 0.6;
+constexpr qreal kVanishAt = 0.85;
+
+QColor withAlpha(QColor c, qreal alpha)
 {
-    // Xiaomi's second-generation stylus reports a fixed MAC address.
-    // All other pens from the same era use the same hardware/firmware and
-    // are treated as the first generation.
-    static const QString kGen2Mac = QStringLiteral("E6:FB:D0:E1:5A:04");
-    if (macValid && mac.compare(kGen2Mac, Qt::CaseInsensitive) == 0)
-        return QStringLiteral("Xiaomi Stylus Pen 2");
-    return QStringLiteral("Xiaomi Stylus Pen 1");
+    c.setAlphaF(alpha);
+    return c;
 }
 
-static void drawBatteryGlyph(QPainter &p, const QRect &r, const ColorTheme &theme,
-                              int pct, bool charging)
+qreal easeInOutCubic(qreal x)
 {
-    const QColor &primary       = theme.primary();
-    const QColor &track         = theme.progressTrack();
-    const QColor &onSurface     = theme.onSurface();
-    const QColor &chargingColor = theme.charging();
-    const QColor &lowBattery    = theme.lowBattery();
+    return x < 0.5 ? 4 * x * x * x : 1 - qPow(-2 * x + 2, 3) / 2;
+}
 
+/** A clockwise arc starting at `startDeg` (0 = 12 o'clock), as a path. */
+QPainterPath clockwiseArc(const QRectF &r, qreal startDeg, qreal spanDeg)
+{
+    QPainterPath path;
+    path.arcMoveTo(r, 90 - startDeg);
+    path.arcTo(r, 90 - startDeg, -spanDeg);
+    return path;
+}
+
+void drawPenGlyph(QPainter &p, const QPointF &centre, qreal size, const QColor &color)
+{
     p.save();
-    p.setRenderHint(QPainter::Antialiasing);
+    p.translate(centre);
+    p.rotate(45);
+    p.setPen(Qt::NoPen);
+    p.setBrush(color);
 
-    const QPoint center = r.center();
-    const int outerRadius = r.width() / 2 - 2;
-    const int ringRadius = outerRadius - 4;
-    const qreal penW = 5.0;
+    const qreal w = size * 0.26;
+    p.drawRoundedRect(QRectF(-w / 2, -size * 0.5, w, size * 0.7), w / 2, w / 2);
 
-    /* Track ring */
-    QPen trackPen(track, penW);
-    trackPen.setCapStyle(Qt::RoundCap);
-    p.setPen(trackPen);
-    p.setBrush(Qt::NoBrush);
-    p.drawEllipse(center, ringRadius, ringRadius);
-
-    /* Battery level arc */
-    const QColor arcColor = charging ? chargingColor : (pct <= 20 ? lowBattery : primary);
-    QPen arcPen(arcColor, penW);
-    arcPen.setCapStyle(Qt::RoundCap);
-    p.setPen(arcPen);
-    const int span = -qBound(0, pct, 100) * 5760 / 100; /* 5760 = 360° * 16 (QPainter arc units) */
-    p.drawArc(center.x() - ringRadius, center.y() - ringRadius,
-              ringRadius * 2, ringRadius * 2,
-              90 * 16, span);
-
-    /* Percentage text */
-    QFont f = p.font();
-    f.setPixelSize(qMax(10, r.width() / 4));
-    f.setWeight(QFont::Bold);
-    p.setFont(f);
-    p.setPen(onSurface);
-    const QString text = QStringLiteral("%1%").arg(pct);
-    const QFontMetrics fm(f);
-    const QRect textBounds = fm.tightBoundingRect(text);
-    const int baseline = center.y() + (fm.ascent() - fm.descent()) / 2;
-    p.drawText(center.x() - textBounds.width() / 2 - textBounds.left(),
-               baseline,
-               text);
-
+    QPainterPath tip;
+    tip.moveTo(-w / 2, size * 0.26);
+    tip.lineTo(w / 2, size * 0.26);
+    tip.lineTo(0, size * 0.5);
+    tip.closeSubpath();
+    p.drawPath(tip);
     p.restore();
 }
 
-static void drawCapsuleBackground(QPainter &p, const QRect &rect, qreal radius,
-                                   const QColor &surface, const QColor &border)
+void drawBolt(QPainter &p, const QRectF &box, const QColor &color)
 {
-    QPainterPath path;
-    path.addRoundedRect(rect, radius, radius);
+    static const QPointF kBolt[] = {
+        {0.58, 0.04}, {0.18, 0.56}, {0.46, 0.56},
+        {0.40, 0.96}, {0.82, 0.40}, {0.54, 0.40},
+    };
 
-    /* Soft drop shadow */
-    QPainterPath shadowPath = path;
-    shadowPath.translate(0, 4);
-    QColor shadowColor(0, 0, 0, 35);
-    p.fillPath(shadowPath, shadowColor);
+    auto mapped = [&box](const QPointF &pt) {
+        return QPointF(box.left() + pt.x() * box.width(),
+                       box.top()  + pt.y() * box.height());
+    };
 
-    /* Capsule fill */
-    p.fillPath(path, surface);
+    QPainterPath path(mapped(kBolt[0]));
+    for (size_t i = 1; i < std::size(kBolt); ++i)
+        path.lineTo(mapped(kBolt[i]));
+    path.closeSubpath();
 
-    /* Border */
-    QPen borderPen(border, 2.0);
-    p.setPen(borderPen);
-    p.setBrush(Qt::NoBrush);
+    p.save();
+    QPen pen(color, 1.2);
+    pen.setJoinStyle(Qt::RoundJoin);
+    p.setPen(pen);
+    p.setBrush(color);
     p.drawPath(path);
+    p.restore();
 }
+
+void drawCross(QPainter &p, const QRectF &box, const QColor &color)
+{
+    p.save();
+    QPen pen(color, 2.0);
+    pen.setCapStyle(Qt::RoundCap);
+    p.setPen(pen);
+    p.drawLine(box.topLeft(), box.bottomRight());
+    p.drawLine(box.topRight(), box.bottomLeft());
+    p.restore();
+}
+
+}  // namespace
 
 PopupWidget::PopupWidget(const PopupConfig &config, QObject *parent)
     : QObject(parent)
     , m_layer(new WaylandLayerSurface(this))
-    , m_animTimer(new QTimer(this))
+    , m_frameTimer(new QTimer(this))
     , m_dismissTimer(new QTimer(this))
-    , m_spinnerTimer(new QTimer(this))
     , m_connectTimer(new QTimer(this))
+    , m_errorTimer(new QTimer(this))
     , m_connectTimeoutMs(config.connectTimeoutMs)
 {
-    updateLayoutCache();
+    QScreen *scr = QGuiApplication::primaryScreen();
+    m_screenW = scr ? scr->geometry().width() : 1080;
 
+    /* Overlay, so the island grows over the bar's centre instead of racing it
+     * for the stacking order of the Top layer. */
     if (!m_layer->init(m_screenW, kSurfaceHeight,
                        WaylandLayerSurface::AnchorTop
                        | WaylandLayerSurface::AnchorLeft
                        | WaylandLayerSurface::AnchorRight,
-                       WaylandLayerSurface::Top)) {
+                       WaylandLayerSurface::Overlay)) {
         qWarning("stylus-popup: layer surface init failed");
     }
 
@@ -133,30 +156,57 @@ PopupWidget::PopupWidget(const PopupConfig &config, QObject *parent)
             m_themeWatcher->addPath(cfgFile);
     }
 
-    QScreen *scr = QGuiApplication::primaryScreen();
-    double refreshRate = scr ? scr->refreshRate() : 60.0;
-    m_animTimer->setInterval(static_cast<int>(1000.0 / refreshRate));
-    m_animTimer->setTimerType(Qt::PreciseTimer);
-    connect(m_animTimer, &QTimer::timeout, this, &PopupWidget::onAnimationTick);
+    const double refreshRate = scr && scr->refreshRate() > 0 ? scr->refreshRate() : 60.0;
+    m_frameTimer->setInterval(qMax(1, static_cast<int>(1000.0 / refreshRate)));
+    m_frameTimer->setTimerType(Qt::PreciseTimer);
+    connect(m_frameTimer, &QTimer::timeout, this, &PopupWidget::onFrame);
 
     m_dismissTimer->setSingleShot(true);
     m_dismissTimer->setInterval(kDismissMs);
-    connect(m_dismissTimer, &QTimer::timeout, this, &PopupWidget::slideOut);
-
-    m_spinnerTimer->setInterval(kSpinnerMs);
-    connect(m_spinnerTimer, &QTimer::timeout, this, &PopupWidget::onSpinnerTick);
+    connect(m_dismissTimer, &QTimer::timeout, this, &PopupWidget::collapse);
 
     /* Single shot: re-armed by every wait, so the deadline is counted from the
      * moment the popup started waiting rather than from the last event. */
     m_connectTimer->setSingleShot(true);
     connect(m_connectTimer, &QTimer::timeout, this, &PopupWidget::onConnectTimeout);
 
-    m_titleFont.setPixelSize(14);
-    m_titleFont.setWeight(QFont::Medium);
+    m_errorTimer->setSingleShot(true);
+    m_errorTimer->setInterval(kErrorHoldMs);
+    connect(m_errorTimer, &QTimer::timeout, this, &PopupWidget::collapse);
 
+    m_width.configure(kMorphK, kMorphC);
+    m_height.configure(kMorphK, kMorphC);
+    m_width.epsilon = m_height.epsilon = 0.3;
+    m_presence.epsilon = 0.005;
+    m_contentAlpha.configure(kFadeK, kFadeC);
+    m_contentAlpha.epsilon = 0.005;
+    m_shake.configure(kShakeK, kShakeC);
+    m_shake.epsilon = 0.2;
+    m_pulse.configure(kPulseK, kPulseC);
+    m_pulse.epsilon = 0.001;
+    m_battery.configure(kFillK, kFillC);
+    m_battery.epsilon = 0.2;
+
+    const QFont base = QGuiApplication::font();
+
+    m_titleFont = base;
+    m_titleFont.setPixelSize(22);
+    m_titleFont.setWeight(QFont::DemiBold);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+    /* Tabular figures, so the percentage does not wobble while it counts. */
+    m_titleFont.setFeature(QFont::Tag("tnum"), 1);
+#endif
+
+    m_subFont = base;
     m_subFont.setPixelSize(12);
     m_subFont.setWeight(QFont::Normal);
+
+    m_compactFont = base;
+    m_compactFont.setPixelSize(13);
+    m_compactFont.setWeight(QFont::Medium);
 }
+
+/* ── state machine ─────────────────────────────────────────────────────── */
 
 bool PopupWidget::canShowFinal() const
 {
@@ -165,22 +215,12 @@ bool PopupWidget::canShowFinal() const
         && m_btConnected;
 }
 
-int PopupWidget::targetHeightForState() const
-{
-    return canShowFinal()
-        ? kSurfaceHeight
-        : kCapsuleTopMargin + kWaitingHeight + kCapsuleTopMargin;
-}
-
 void PopupWidget::showState(const StylusState &state)
 {
-    const bool wasFinal = canShowFinal();
+    const bool wasFinal    = canShowFinal();
+    const bool wasCharging = m_state.charging;
 
-    if (state != m_state) {
-        m_state = state;
-        m_dirty = true;
-    }
-
+    m_state = state;
     m_dismissTimer->stop();
 
     if (!state.attached) {
@@ -205,13 +245,13 @@ void PopupWidget::showState(const StylusState &state)
     if (m_gaveUp)
         return;
 
-    if (!m_shown) {
-        slideIn();
+    if (!isShown() || m_mode == IslandMode::Error) {
+        present();
         return;
     }
 
     if (canShowFinal() && !wasFinal) {
-        transitionToFinal();
+        setMode(IslandMode::Expanded);
         return;
     }
 
@@ -220,8 +260,12 @@ void PopupWidget::showState(const StylusState &state)
     else if (!m_connectTimer->isActive())
         armConnectTimer();
 
-    if (m_dirty)
-        renderFrame();
+    setMode(canShowFinal() ? IslandMode::Expanded : IslandMode::Compact);
+
+    if (m_content == Content::Battery && state.charging != wasCharging)
+        m_pulse.velocity += kPulseKick;
+    startFrames();  /* new values to draw */
+
     if (canShowFinal())
         m_dismissTimer->start();
 }
@@ -239,8 +283,8 @@ void PopupWidget::onConnectAttemptStarted()
         qInfo("PopupWidget: an attempt is starting, so the wait starts over");
     m_gaveUp = false;
 
-    if (!m_shown)
-        slideIn();
+    if (!isShown() || m_mode == IslandMode::Error)
+        present();
     else if (!canShowFinal() && !m_connectTimer->isActive())
         armConnectTimer();
 }
@@ -254,7 +298,7 @@ void PopupWidget::onBtConnected()
     m_gaveUp = false;
     m_connectTimer->stop();
     if (canShowFinal())
-        transitionToFinal();
+        setMode(IslandMode::Expanded);
 }
 
 void PopupWidget::onBtConnectionFailed(const QString &error)
@@ -263,37 +307,22 @@ void PopupWidget::onBtConnectionFailed(const QString &error)
 
     /* Nothing retries this attach stage on its own, so stop promising a
      * connection that is not coming. */
-    endWaiting(true);
+    endWaiting(true, IslandStrings::connectFailed());
 }
 
-void PopupWidget::transitionToFinal()
+void PopupWidget::onConnectTimeout()
 {
-    m_dirty = true;
+    qWarning("PopupWidget: the pen did not connect within %d ms, giving up",
+             m_connectTimeoutMs);
 
-    if (m_layer->visibleHeight() < kSurfaceHeight) {
-        m_morphing = true;
-        m_morphProgress = 0.0;
-        startAnimation(m_layer->visibleHeight(), kSurfaceHeight, QEasingCurve::OutCubic);
-    } else {
-        m_morphing = false;
-        m_morphProgress = 1.0;
-        renderFrame();
-        if (canShowFinal() && !m_dismissTimer->isActive())
-            m_dismissTimer->start();
-    }
+    emit connectTimedOut();
+    endWaiting(true, canShowFinal() ? QString() : IslandStrings::connectTimedOut());
 }
 
-void PopupWidget::slideIn()
+void PopupWidget::present()
 {
-    startAnimation(0, targetHeightForState(), QEasingCurve::OutBack);
-    m_spinnerTimer->start();
+    setMode(canShowFinal() ? IslandMode::Expanded : IslandMode::Compact);
     armConnectTimer();
-}
-
-void PopupWidget::slideOut()
-{
-    stopWaitingTimers();
-    startAnimation(m_layer->visibleHeight(), 0, QEasingCurve::InBack);
 }
 
 void PopupWidget::armConnectTimer()
@@ -307,262 +336,445 @@ void PopupWidget::armConnectTimer()
 void PopupWidget::stopWaitingTimers()
 {
     m_connectTimer->stop();
-    m_spinnerTimer->stop();
 }
 
-void PopupWidget::endWaiting(bool gaveUp)
+void PopupWidget::endWaiting(bool gaveUp, const QString &reason)
 {
     m_gaveUp = gaveUp;
+    stopWaitingTimers();
 
-    if (m_shown)
-        slideOut();  /* stops the waiting timers on its way out */
+    if (!isShown())
+        return;
+
+    if (!reason.isEmpty() && m_mode != IslandMode::Expanded)
+        showError(reason);
     else
-        stopWaitingTimers();
+        collapse();
 }
 
-void PopupWidget::onConnectTimeout()
+void PopupWidget::showError(const QString &message)
 {
-    qWarning("PopupWidget: the pen did not connect within %d ms, giving up",
-             m_connectTimeoutMs);
-
-    emit connectTimedOut();
-    endWaiting(true);
+    m_errorText = message;
+    m_dismissTimer->stop();
+    setMode(IslandMode::Error);
+    m_errorTimer->start();
 }
 
-void PopupWidget::startAnimation(int fromH, int toH, const QEasingCurve &curve)
+void PopupWidget::collapse()
 {
-    m_animStart  = fromH;
-    m_animEnd    = toH;
-    m_animCurve  = curve;
-    m_elapsed.start();
-    m_animTimer->start();
-    m_shown      = (toH > 0);
+    m_dismissTimer->stop();
+    m_errorTimer->stop();
+    stopWaitingTimers();
+    setMode(IslandMode::Hidden);
 }
 
-void PopupWidget::onAnimationTick()
+/* ── choreography ──────────────────────────────────────────────────────── */
+
+PopupWidget::Content PopupWidget::contentFor(IslandMode mode)
 {
-    double t = qBound(0.0, static_cast<double>(m_elapsed.elapsed()) / kAnimMs, 1.0);
-    double progress = m_animCurve.valueForProgress(t);
+    switch (mode) {
+    case IslandMode::Compact:  return Content::Connecting;
+    case IslandMode::Expanded: return Content::Battery;
+    case IslandMode::Error:    return Content::Error;
+    case IslandMode::Hidden:   break;
+    }
+    return Content::None;
+}
 
-    if (m_morphing)
-        m_morphProgress = t;
+void PopupWidget::setMode(IslandMode mode)
+{
+    if (mode == m_mode)
+        return;
+    m_mode = mode;
 
-    int h = qBound(0, static_cast<int>(m_animStart + (m_animEnd - m_animStart) * progress), kSurfaceHeight);
+    if (mode != IslandMode::Error)
+        m_errorTimer->stop();
+    if (mode == IslandMode::Expanded)
+        m_dismissTimer->start();
 
-    if (h != m_layer->visibleHeight() || m_morphing) {
-        m_dirty = true;
-        m_layer->setVisibleHeight(h);
-        renderFrame();
+    if (mode == IslandMode::Hidden && !m_layerVisible)
+        return;
+
+    if (!m_layerVisible) {
+        /* Every appearance starts as a dot at the top centre. */
+        m_layerVisible = true;
+        m_layer->setVisibleHeight(kSurfaceHeight);
+        m_width.snap(kMinimalSize);
+        m_height.snap(kMinimalSize);
+        m_presence.snap(0.0);
+        m_contentAlpha.snap(0.0);
+        m_shake.snap(0.0);
+        m_pulse.snap(0.0);
+        m_content = Content::None;
     }
 
-    if (t >= 1.0) {
-        m_animTimer->stop();
-        if (m_animEnd == 0) {
-            m_layer->hide();
-        } else if (m_animEnd == kSurfaceHeight && canShowFinal()) {
-            m_morphing = false;
-            m_morphProgress = 1.0;
-            m_dismissTimer->start();
-        }
+    if (mode != IslandMode::Hidden) {
+        /* Also catches a collapse that is interrupted halfway. */
+        m_collapsing = false;
+        m_presence.configure(kMorphK, kMorphC);
+        m_presence.target = 1.0;
     }
+
+    /* Old content out first; the shape follows once it has faded. */
+    m_nextContent   = contentFor(mode);
+    m_swapPending   = true;
+    m_revealPending = false;
+    m_contentAlpha.target = 0.0;
+    startFrames();
 }
 
-void PopupWidget::onSpinnerTick()
+qreal PopupWidget::compactWidthFor(const QString &text) const
 {
-    m_spinnerAngle = (m_spinnerAngle + 10) % 360;
+    /* pad + 20 px icon + gap + text + trailing pad, with the icon concentric
+     * to the rounded end: (36 / 2) - 8 = 10 = icon radius. */
+    const QFontMetricsF fm(m_compactFont);
+    return 8 + 20 + 10 + fm.horizontalAdvance(text) + 16;
+}
 
-    if (m_shown && !canShowFinal()) {
-        m_dirty = true;
-        renderFrame();
+void PopupWidget::applyShapeFor(Content content)
+{
+    qreal w = kMinimalSize;
+    qreal h = kMinimalSize;
+    switch (content) {
+    case Content::Connecting:
+        w = compactWidthFor(IslandStrings::connecting());
+        h = kCompactHeight;
+        break;
+    case Content::Error:
+        w = compactWidthFor(m_errorText);
+        h = kCompactHeight;
+        break;
+    case Content::Battery:
+        w = kExpandedWidth;
+        h = kExpandedHeight;
+        m_battery.snap(0.0);  /* the ring fills up as the island opens */
+        m_battery.target = m_state.capacity;
+        break;
+    case Content::None:
+        break;
     }
+    w = qMin(w, m_screenW - 16.0);
+
+    const bool shrinking = content == Content::None;
+    m_width.configure(shrinking ? kSettleK : kMorphK, shrinking ? kSettleC : kMorphC);
+    m_height.configure(shrinking ? kSettleK : kMorphK, shrinking ? kSettleC : kMorphC);
+
+    m_fromW = m_width.value;
+    m_fromH = m_height.value;
+    m_width.target  = w;
+    m_height.target = h;
+    m_collapsing = shrinking;
 }
 
-void PopupWidget::updateLayoutCache()
+qreal PopupWidget::shapeProgress() const
 {
-    QScreen *scr = QGuiApplication::primaryScreen();
-    m_screenW = scr ? scr->geometry().width() : 1080;
-
-    const int capsuleW = qMin(kCapsuleWidth, m_screenW - 16);
-    const int capsuleX = (m_screenW - capsuleW) / 2;
-    m_capsuleRect = QRect(capsuleX, kCapsuleTopMargin, capsuleW, kCapsuleHeight);
-
-    const int chipX = (m_screenW - kWaitingWidth) / 2;
-    m_waitingChipRect = QRect(chipX, kCapsuleTopMargin, kWaitingWidth, kWaitingHeight);
-
-    m_glyphRect = QRect(m_capsuleRect.x() + kSpinnerTextGap,
-                        m_capsuleRect.y() + (m_capsuleRect.height() - kBatteryGlyphSize) / 2,
-                        kBatteryGlyphSize, kBatteryGlyphSize);
-
-    const int limitW = 38;
-    const int limitH = 34;
-    m_limitRect = QRect(m_capsuleRect.right() - kSpinnerTextGap - limitW,
-                        m_capsuleRect.y() + (m_capsuleRect.height() - limitH) / 2,
-                        limitW, limitH);
-
-    m_textRect = QRect(m_glyphRect.right() + kSpinnerTextGap,
-                       m_capsuleRect.y(),
-                       m_limitRect.left() - m_glyphRect.right() - 2 * kSpinnerTextGap,
-                       m_capsuleRect.height());
+    auto progress = [](const Spring &s, qreal from) {
+        const qreal span = qAbs(s.target - from);
+        if (span < 1.0)
+            return 1.0;
+        return qBound(0.0, 1.0 - qAbs(s.target - s.value) / span, 1.0);
+    };
+    return qMin(progress(m_width, m_fromW), progress(m_height, m_fromH));
 }
 
-void PopupWidget::drawFinalContent(QPainter &p)
+void PopupWidget::startFrames()
 {
-    drawBatteryGlyph(p, m_glyphRect, m_theme,
-                     m_state.capacity, m_state.charging);
+    if (!m_layerVisible || m_frameTimer->isActive())
+        return;
 
-    p.setFont(m_titleFont);
-    p.setPen(m_theme.onSurface());
-    const QFontMetrics fmTitle(m_titleFont);
-    const QString titleText = stylusNameForMac(m_state.macAddress, m_state.macValid);
-    const QRect titleTb = fmTitle.tightBoundingRect(titleText);
-    const int titleX = m_textRect.center().x() - titleTb.width() / 2 - titleTb.left();
-    const int titleY = m_textRect.center().y() + (fmTitle.ascent() - fmTitle.descent()) / 2;
-    p.drawText(titleX, titleY, titleText);
-
-    if (m_state.limit > 0 && m_state.limit <= 100)
-        drawLimitBadge(p);
+    if (!m_clock.isValid())
+        m_clock.start();
+    m_lastFrameNs = m_clock.nsecsElapsed() - m_frameTimer->interval() * 1000000LL;
+    m_frameTimer->start();
 }
 
-QRect PopupWidget::spinnerRectFor(const QRect &container) const
+bool PopupWidget::anythingMoving() const
 {
-    return QRect(container.x() + kSpinnerTextGap,
-                 container.y() + (container.height() - kSpinnerSize) / 2,
-                 kSpinnerSize, kSpinnerSize);
+    return m_swapPending || m_revealPending || m_collapsing
+        || m_content == Content::Connecting  /* the spinner never rests */
+        || !m_width.settled() || !m_height.settled()
+        || !m_presence.settled() || !m_contentAlpha.settled()
+        || !m_shake.settled() || !m_pulse.settled() || !m_battery.settled();
 }
 
-void PopupWidget::drawLimitBadge(QPainter &p)
+void PopupWidget::onFrame()
 {
-    const QColor &surface      = m_theme.surface();
-    const QColor &primary      = m_theme.primary();
-    const QColor &onSurfaceVar = m_theme.onSurfaceVariant();
+    const qint64 now = m_clock.nsecsElapsed();
+    const qreal dt = (now - m_lastFrameNs) / 1e9;
+    m_lastFrameNs = now;
 
-    QColor fill = surface.lighter(160);
-    fill.setAlphaF(0.5);
-    p.setPen(Qt::NoPen);
-    p.setBrush(fill);
-    p.drawRoundedRect(m_limitRect, 10, 10);
+    if (m_swapPending && m_contentAlpha.value < 0.04) {
+        m_swapPending = false;
+        m_content = m_nextContent;
+        applyShapeFor(m_content);
+        m_revealPending = m_content != Content::None;
+    }
 
-    QColor border = surface.lighter(240);
-    border.setAlphaF(0.85);
-    p.setPen(QPen(border, 1));
-    p.setBrush(Qt::NoBrush);
-    p.drawRoundedRect(m_limitRect, 10, 10);
+    if (m_revealPending && shapeProgress() >= kRevealAt) {
+        m_revealPending = false;
+        m_contentAlpha.target = 1.0;
+        if (m_content == Content::Error)
+            m_shake.velocity = kShakeKick;
+    }
 
-    QFont labelFont(m_subFont);
-    labelFont.setPixelSize(9);
-    labelFont.setWeight(QFont::Medium);
+    if (m_collapsing && m_presence.target > 0.0 && shapeProgress() >= kVanishAt) {
+        m_presence.configure(kSettleK, kSettleC);
+        m_presence.target = 0.0;
+    }
 
-    QFont valueFont(m_subFont);
-    valueFont.setWeight(QFont::DemiBold);
+    if (m_content == Content::Battery)
+        m_battery.target = m_state.capacity;
 
-    const QString valueText = QStringLiteral("%1%").arg(m_state.limit);
-    const QFontMetrics fmLabel(labelFont);
-    const QFontMetrics fmValue(valueFont);
-    const QRect labelTb = fmLabel.tightBoundingRect(QStringLiteral("LIMIT"));
-    const QRect valueTb = fmValue.tightBoundingRect(valueText);
+    for (Spring *s : {&m_width, &m_height, &m_presence, &m_contentAlpha,
+                      &m_shake, &m_pulse, &m_battery})
+        s->step(dt);
 
-    const int cx = m_limitRect.center().x();
-    const int totalH = labelTb.height() + 2 + valueTb.height();
-    const int topY = m_limitRect.center().y() - totalH / 2;
+    if (m_collapsing && m_presence.target <= 0.0 && m_presence.value < 0.02) {
+        finishHide();
+        return;
+    }
 
-    p.setFont(labelFont);
-    p.setPen(onSurfaceVar);
-    p.drawText(cx - labelTb.width() / 2 - labelTb.left(),
-               topY + labelTb.height() - labelTb.bottom(),
-               QStringLiteral("LIMIT"));
+    renderFrame();
 
-    p.setFont(valueFont);
-    p.setPen(primary);
-    p.drawText(cx - valueTb.width() / 2 - valueTb.left(),
-               topY + labelTb.height() + 2 + valueTb.height() - valueTb.bottom(),
-               valueText);
+    if (!anythingMoving())
+        m_frameTimer->stop();
 }
+
+void PopupWidget::finishHide()
+{
+    m_frameTimer->stop();
+    m_layer->hide();
+    m_layerVisible = false;
+    m_collapsing   = false;
+    m_content      = Content::None;
+    m_presence.snap(0.0);
+}
+
+/* ── painting ──────────────────────────────────────────────────────────── */
 
 void PopupWidget::renderFrame()
 {
-    if (!m_layer->isReady() || m_layer->visibleHeight() <= 0) return;
+    if (!m_layer->isReady() || !m_layerVisible)
+        return;
 
     const int scale = m_layer->scale();
-
-    if (m_imageBuffer.width() != m_screenW * scale || m_imageBuffer.height() != kSurfaceHeight * scale) {
-        m_imageBuffer = QImage(m_screenW * scale, kSurfaceHeight * scale, QImage::Format_ARGB32_Premultiplied);
-        m_dirty = true;
+    if (m_imageBuffer.width() != m_screenW * scale
+        || m_imageBuffer.height() != kSurfaceHeight * scale) {
+        m_imageBuffer = QImage(m_screenW * scale, kSurfaceHeight * scale,
+                               QImage::Format_ARGB32_Premultiplied);
     }
+    m_imageBuffer.fill(Qt::transparent);
 
-    if (m_dirty) {
-        m_imageBuffer.fill(Qt::transparent);
-
+    {
         QPainter p(&m_imageBuffer);
         p.setRenderHint(QPainter::Antialiasing);
+        p.setRenderHint(QPainter::TextAntialiasing);
         p.scale(scale, scale);
-
-        const QColor &surface       = m_theme.surface();
-        const QColor &onSurfaceVar  = m_theme.onSurfaceVariant();
-        const QColor &primary       = m_theme.primary();
-
-        QColor border = surface.lighter(220);
-        border.setAlphaF(0.75);
-
-        if (canShowFinal() && m_morphing) {
-            /* ── Morphing transition: chip → capsule ── */
-            qreal t = static_cast<qreal>(m_morphProgress);
-            QRect curRect(
-                m_waitingChipRect.x() + static_cast<int>((m_capsuleRect.x() - m_waitingChipRect.x()) * t),
-                m_waitingChipRect.y() + static_cast<int>((m_capsuleRect.y() - m_waitingChipRect.y()) * t),
-                m_waitingChipRect.width() + static_cast<int>((m_capsuleRect.width() - m_waitingChipRect.width()) * t),
-                m_waitingChipRect.height() + static_cast<int>((m_capsuleRect.height() - m_waitingChipRect.height()) * t));
-            const int startR = kWaitingHeight / 2;
-            const int endR = kCapsuleHeight / 2;
-            const int curR = startR + static_cast<int>((endR - startR) * t);
-
-            QPainterPath curPath;
-            curPath.addRoundedRect(curRect, curR, curR);
-            drawCapsuleBackground(p, curRect, curR, surface, border);
-            p.setClipPath(curPath);
-
-            qreal waitingAlpha = qBound(0.0, 1.0 - t / 0.35, 1.0);
-            qreal finalAlpha   = qBound(0.0, (t - 0.35) / 0.45, 1.0);
-
-            if (waitingAlpha > 0.0) {
-                p.save();
-                p.setOpacity(waitingAlpha);
-                drawSpinner(p, spinnerRectFor(curRect), m_spinnerAngle, primary);
-                p.restore();
-            }
-
-            if (finalAlpha > 0.0) {
-                p.save();
-                p.setOpacity(finalAlpha);
-                drawFinalContent(p);
-                p.restore();
-            }
-            p.setClipping(false);
-        } else if (canShowFinal()) {
-            /* ── Floating capsule background ── */
-            drawCapsuleBackground(p, m_capsuleRect, kCapsuleHeight / 2.0, surface, border);
-
-            drawFinalContent(p);
-        } else {
-            /* ── Waiting chip ── */
-            drawCapsuleBackground(p, m_waitingChipRect, kWaitingHeight / 2.0, surface, border);
-
-            const QRect spinnerRect = spinnerRectFor(m_waitingChipRect);
-            drawSpinner(p, spinnerRect, m_spinnerAngle, primary);
-
-            p.setFont(m_subFont);
-            p.setPen(onSurfaceVar);
-            const QFontMetrics fm(m_subFont);
-            const QRect textBounds = fm.tightBoundingRect(QStringLiteral("Connecting…"));
-            const int textX = spinnerRect.x() + kSpinnerSize + kSpinnerTextGap - textBounds.left();
-            const int textY = m_waitingChipRect.y() + (m_waitingChipRect.height() + fm.ascent() - fm.descent()) / 2;
-            p.drawText(textX, textY, QStringLiteral("Connecting…"));
-        }
-
-        m_dirty = false;
+        paintIsland(p);
     }
 
     m_layer->updateImage(m_imageBuffer);
     m_layer->commitFrame();
+}
+
+void PopupWidget::paintIsland(QPainter &p)
+{
+    const qreal presence = qMax(0.0, m_presence.value);
+    const qreal opacity  = qMin(1.0, presence);
+    if (opacity <= 0.001)
+        return;
+
+    const qreal w = qMax(1.0, m_width.value);
+    const qreal h = qMax(1.0, m_height.value);
+    const qreal radius = h / 2;
+    const QRectF r(-w / 2, -h / 2, w, h);
+
+    p.save();
+    p.translate(m_screenW / 2.0 + m_shake.value, kTopMargin + h / 2);
+    const qreal scale = (0.6 + 0.4 * presence) * (1.0 + m_pulse.value);
+    p.scale(scale, scale);
+    p.setOpacity(opacity);
+
+    /* Soft, low elevation shadow: three widening layers, offset downwards. */
+    p.setPen(Qt::NoPen);
+    static const qreal kShadowAlpha[] = {0.10, 0.07, 0.04};
+    for (int i = 0; i < 3; ++i) {
+        const qreal spread = 1.5 * (i + 1);
+        const QRectF s = r.adjusted(-spread, spread, spread, spread * 2);
+        p.setBrush(QColor(0, 0, 0, qRound(255 * kShadowAlpha[i])));
+        p.drawRoundedRect(s, radius + spread, radius + spread);
+    }
+
+    QPainterPath shape;
+    shape.addRoundedRect(r, radius, radius);
+    p.fillPath(shape, m_theme.islandFill());
+    p.setPen(QPen(m_theme.outline(), 1.0));
+    p.setBrush(Qt::NoBrush);
+    p.drawPath(shape);
+
+    const qreal a = qBound(0.0, m_contentAlpha.value, 1.0);
+    if (a > 0.001 && m_content != Content::None) {
+        p.setClipPath(shape);
+        p.setOpacity(opacity * a);
+
+        /* Content settles into place: a touch smaller and lower while it
+         * fades in, the same motion in reverse when it leaves. */
+        const qreal cs = 0.92 + 0.08 * a;
+        p.translate(0, (1.0 - a) * 4.0);
+        p.scale(cs, cs);
+
+        switch (m_content) {
+        case Content::Connecting: paintConnecting(p, r); break;
+        case Content::Battery:    paintBattery(p, r);    break;
+        case Content::Error:      paintError(p, r);      break;
+        case Content::None:       break;
+        }
+    }
+
+    p.restore();
+}
+
+void PopupWidget::paintConnecting(QPainter &p, const QRectF &r)
+{
+    const qreal pad = (r.height() - 20) / 2;
+    const QRectF spinner(r.left() + pad, r.center().y() - 10, 20, 20);
+    drawSpinner(p, spinner);
+
+    p.setFont(m_compactFont);
+    p.setPen(m_theme.onSurfaceVariant());
+    const QRectF text(spinner.right() + 10, r.top(),
+                      r.right() - spinner.right() - 10 - 12, r.height());
+    p.drawText(text, Qt::AlignLeft | Qt::AlignVCenter, IslandStrings::connecting());
+}
+
+void PopupWidget::paintError(QPainter &p, const QRectF &r)
+{
+    const qreal pad = (r.height() - 20) / 2;
+    const QRectF icon(r.left() + pad, r.center().y() - 10, 20, 20);
+
+    p.setPen(Qt::NoPen);
+    p.setBrush(withAlpha(m_theme.error(), 0.18));
+    p.drawEllipse(icon);
+    drawCross(p, icon.adjusted(6.5, 6.5, -6.5, -6.5), m_theme.error());
+
+    p.setFont(m_compactFont);
+    p.setPen(m_theme.onSurface());
+    const QRectF text(icon.right() + 10, r.top(),
+                      r.right() - icon.right() - 10 - 12, r.height());
+    p.drawText(text, Qt::AlignLeft | Qt::AlignVCenter, m_errorText);
+}
+
+void PopupWidget::paintBattery(QPainter &p, const QRectF &r)
+{
+    /* Leading: the ring sits `pad` in from the rounded end, so its radius is
+     * the island's radius minus the padding - a circle concentric with it. */
+    const qreal pad  = kExpandedPad;
+    const qreal ringD = qMax(24.0, r.height() - 2 * pad);
+    const QRectF ring(r.left() + pad, r.center().y() - ringD / 2, ringD, ringD);
+    drawBatteryRing(p, ring);
+
+    /* Trailing: a charging chip, concentric in the same way. */
+    const qreal chipPad = 20;
+    const qreal chipD = qMax(16.0, r.height() - 2 * chipPad);
+    const QRectF chip(r.right() - chipPad - chipD, r.center().y() - chipD / 2, chipD, chipD);
+    if (m_state.charging) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(withAlpha(m_theme.charging(), 0.18));
+        p.drawEllipse(chip);
+        const qreal inset = chipD * 0.25;
+        drawBolt(p, chip.adjusted(inset, inset, -inset, -inset), m_theme.charging());
+    }
+
+    /* Centre: percentage over a one-line status. */
+    const qreal textLeft  = ring.right() + 14;
+    const qreal textRight = m_state.charging ? chip.left() - 12 : r.right() - 24;
+    const qreal textW     = qMax(0.0, textRight - textLeft);
+
+    QString status = m_state.charging ? IslandStrings::charging() : IslandStrings::connected();
+    if (m_state.limit > 0 && m_state.limit <= 100)
+        status += QStringLiteral(" · ") + IslandStrings::chargeLimit(m_state.limit);
+
+    const QFontMetricsF fmTitle(m_titleFont);
+    const QFontMetricsF fmSub(m_subFont);
+    const qreal gap    = 2;
+    const qreal blockH = fmTitle.height() + gap + fmSub.height();
+    const qreal top    = r.center().y() - blockH / 2;
+
+    p.setFont(m_titleFont);
+    p.setPen(m_theme.onSurface());
+    p.drawText(QPointF(textLeft, top + fmTitle.ascent()),
+               QStringLiteral("%1%").arg(qBound(0, qRound(m_battery.value), 100)));
+
+    p.setFont(m_subFont);
+    p.setPen(m_theme.onSurfaceVariant());
+    p.drawText(QPointF(textLeft, top + fmTitle.height() + gap + fmSub.ascent()),
+               fmSub.elidedText(status, Qt::ElideRight, textW));
+}
+
+void PopupWidget::drawBatteryRing(QPainter &p, const QRectF &r) const
+{
+    const qreal stroke = 5.0;
+    const QRectF arcRect = r.adjusted(stroke / 2 + 1, stroke / 2 + 1,
+                                      -stroke / 2 - 1, -stroke / 2 - 1);
+
+    p.save();
+    p.setBrush(Qt::NoBrush);
+
+    QPen track(m_theme.progressTrack(), stroke);
+    p.setPen(track);
+    p.drawEllipse(arcRect);
+
+    const qreal pct = qBound(0.0, m_battery.value, 100.0);
+    const QColor arcColor = m_state.charging ? m_theme.charging()
+                          : (pct <= 20.0 ? m_theme.lowBattery()
+                                                    : m_theme.primary());
+    if (pct > 0.5) {
+        QPen arc(arcColor, stroke);
+        arc.setCapStyle(Qt::RoundCap);
+        p.setPen(arc);
+        p.drawPath(clockwiseArc(arcRect, 0, 360.0 * pct / 100.0));
+    }
+    p.restore();
+
+    drawPenGlyph(p, r.center(), r.width() * 0.42, m_theme.onSurfaceVariant());
+}
+
+void PopupWidget::drawSpinner(QPainter &p, const QRectF &r) const
+{
+    /* MD3 indeterminate progress: the arc's head races ahead, then its tail
+     * catches up, while the whole thing turns. Each cycle the tail ends 240°
+     * further on, so successive cycles join without a jump. */
+    constexpr qreal kCycle  = 1.333;
+    constexpr qreal kGrowth = 240.0;
+    constexpr qreal kMinArc = 30.0;
+
+    const qreal t = m_clock.isValid() ? m_clock.elapsed() / 1000.0 : 0.0;
+    const int   n = static_cast<int>(t / kCycle);
+    const qreal phase = std::fmod(t, kCycle) / kCycle;
+
+    qreal head = kGrowth;
+    qreal tail = 0.0;
+    if (phase < 0.5)
+        head = easeInOutCubic(phase * 2) * kGrowth;
+    else
+        tail = easeInOutCubic((phase - 0.5) * 2) * kGrowth;
+
+    const qreal start = n * kGrowth + t * 120.0 + tail;
+    const qreal span  = head - tail + kMinArc;
+
+    const qreal stroke = 2.5;
+    const QRectF arcRect = r.adjusted(stroke / 2 + 1, stroke / 2 + 1,
+                                      -stroke / 2 - 1, -stroke / 2 - 1);
+    p.save();
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(withAlpha(m_theme.primary(), 0.14), stroke));
+    p.drawEllipse(arcRect);
+
+    QPen arc(m_theme.primary(), stroke);
+    arc.setCapStyle(Qt::RoundCap);
+    p.setPen(arc);
+    p.drawPath(clockwiseArc(arcRect, std::fmod(start, 360.0), span));
+    p.restore();
 }
 
 void PopupWidget::onThemeFileChanged()
@@ -574,44 +786,8 @@ void PopupWidget::onThemeFileChanged()
     if (QFile::exists(cfgFile))
         m_themeWatcher->addPath(cfgFile);
 
-    if (m_theme.loadFromQt6ct()) {
-        m_dirty = true;
+    if (m_theme.loadFromQt6ct())
         renderFrame();
-    } else {
+    else
         qWarning("stylus-popup: theme reload failed, keeping previous colors");
-    }
-}
-
-static void drawSpinner(QPainter &p, const QRect &r, int angle, const QColor &color)
-{
-    p.save();
-    p.setRenderHint(QPainter::Antialiasing);
-
-    const QPoint center = r.center();
-    const int radius = r.width() / 2 - 3;
-    const qreal penW = 2.5;
-
-    /* MD3-style flat track ring */
-    QColor trackColor = color;
-    trackColor.setAlphaF(0.12);
-    QPen trackPen(trackColor, penW);
-    trackPen.setCapStyle(Qt::RoundCap);
-    p.setPen(trackPen);
-    p.setBrush(Qt::NoBrush);
-    p.drawEllipse(center, radius, radius);
-
-    /* MD3 indeterminate arc: fixed sweep, smooth rotation */
-    const int span = 90 * 16;
-
-    const int startAngle = (90 - angle) * 16;
-
-    QPen arcPen(color, penW);
-    arcPen.setCapStyle(Qt::RoundCap);
-    p.setPen(arcPen);
-    p.setBrush(Qt::NoBrush);
-    p.drawArc(center.x() - radius, center.y() - radius,
-              radius * 2, radius * 2,
-              startAngle, -span);
-
-    p.restore();
 }

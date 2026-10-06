@@ -2,10 +2,9 @@
 
 #include <QObject>
 #include <QTimer>
-#include <QEasingCurve>
 #include <QElapsedTimer>
 #include <QImage>
-#include <QRect>
+#include <QRectF>
 #include <QFont>
 
 class QFileSystemWatcher;
@@ -13,9 +12,20 @@ class QPainter;
 
 #include "colortheme.h"
 #include "popupconfig.h"
+#include "spring.h"
 #include "stylusmonitor.h"
 #include "waylandlayersurface.h"
 
+/**
+ * The pen's status island: a pill at the top centre of the screen that grows
+ * out of a small dot, morphs between a compact "connecting" form and an
+ * expanded battery view, and shrinks back into the dot before it disappears.
+ *
+ * Every animated quantity is a `Spring`, driven by one frame loop that only
+ * runs while something is moving. Shape and content are choreographed apart:
+ * the old content fades out, the shape morphs, and the new content fades in
+ * once the shape has mostly arrived.
+ */
 class PopupWidget : public QObject
 {
     Q_OBJECT
@@ -47,76 +57,102 @@ private slots:
     void onConnectTimeout();
 
 private:
-    void slideIn();
-    void slideOut();
-    void startAnimation(int fromH, int toH, const QEasingCurve &curve);
-    void transitionToFinal();
-    void renderFrame();
-    void onAnimationTick();
-    void onSpinnerTick();
-    void onThemeFileChanged();
-    void updateLayoutCache();
-    int  targetHeightForState() const;
+    /** What the island is asked to be. */
+    enum class IslandMode { Hidden, Compact, Expanded, Error };
+
+    /** What is painted inside it; lags behind the mode while it cross-fades. */
+    enum class Content { None, Connecting, Battery, Error };
+
+    /* ── state machine (what to show) ── */
+    bool isShown() const { return m_mode != IslandMode::Hidden; }
     bool canShowFinal() const;
-    void drawFinalContent(QPainter &p);
-    void drawLimitBadge(QPainter &p);
-    QRect spinnerRectFor(const QRect &container) const;
+    void present();
+    void collapse();
+    void showError(const QString &message);
 
     /** Starts the wait window, unless the timeout is switched off. */
     void armConnectTimer();
 
-    /** Stops the two timers that only run while the pen is on its way. */
+    /** Stops the timer that only runs while the pen is on its way. */
     void stopWaitingTimers();
 
-    /** Ends the wait and takes the popup off screen. `gaveUp` records whether
+    /** Ends the wait and takes the island off screen. `gaveUp` records whether
      *  this attach stage is over for good (no connection is coming) or was
-     *  merely interrupted (the pen detached, so a fresh attach may wait). */
-    void endWaiting(bool gaveUp);
+     *  merely interrupted (the pen detached, so a fresh attach may wait). A
+     *  non-empty `reason` is shown briefly before the island goes away. */
+    void endWaiting(bool gaveUp, const QString &reason = QString());
 
-    static constexpr int kSurfaceHeight   = 110;
-    static constexpr int kCapsuleWidth    = 260;
-    static constexpr int kCapsuleHeight   = 66;
-    static constexpr int kCapsuleTopMargin= 4;
-    static constexpr int kWaitingWidth    = 132;
-    static constexpr int kWaitingHeight   = 38;
-    static constexpr int kBatteryGlyphSize= 44;
-    static constexpr int kAnimMs          = 280;
-    static constexpr int kDismissMs       = 4000;
-    static constexpr int kSpinnerSize     = 22;
-    static constexpr int kSpinnerTextGap  = 8;
-    static constexpr int kSpinnerMs       = 16;
+    /* ── choreography (how it moves) ── */
+    void setMode(IslandMode mode);
+    static Content contentFor(IslandMode mode);
+    void applyShapeFor(Content content);
+    qreal shapeProgress() const;
+    void startFrames();
+    void onFrame();
+    bool anythingMoving() const;
+    void finishHide();
+
+    /* ── painting ── */
+    void renderFrame();
+    void paintIsland(QPainter &p);
+    void paintConnecting(QPainter &p, const QRectF &r);
+    void paintBattery(QPainter &p, const QRectF &r);
+    void paintError(QPainter &p, const QRectF &r);
+    void drawSpinner(QPainter &p, const QRectF &r) const;
+    void drawBatteryRing(QPainter &p, const QRectF &r) const;
+    qreal compactWidthFor(const QString &text) const;
+    void onThemeFileChanged();
+
+    /* Geometry, in logical pixels. The island's corner radius is always half
+     * its height, and everything inside follows from that radius minus the
+     * padding, so inner shapes stay concentric with the outline. */
+    static constexpr int kSurfaceHeight  = 104;
+    static constexpr int kTopMargin      = 8;
+    static constexpr int kMinimalSize    = 36;
+    static constexpr int kCompactHeight  = 36;
+    static constexpr int kExpandedWidth  = 320;
+    static constexpr int kExpandedHeight = 76;
+    static constexpr int kExpandedPad    = 12;
+    static constexpr int kDismissMs      = 4000;
+    static constexpr int kErrorHoldMs    = 1400;
 
     ColorTheme          m_theme;
-    QFileSystemWatcher  *m_themeWatcher;
+    QFileSystemWatcher *m_themeWatcher;
     WaylandLayerSurface *m_layer;
-    QTimer              *m_animTimer;
-    QTimer              *m_dismissTimer;
-    QTimer              *m_spinnerTimer;
-    QTimer              *m_connectTimer;
-    StylusState          m_state;
-    bool                 m_shown  = false;
-    bool                 m_dirty  = true;
-    bool                 m_btConnected = false;
-    bool                 m_gaveUp = false;
-    int                  m_connectTimeoutMs = PopupConfig::kDefaultConnectTimeoutMs;
-    int                  m_screenW = 1080;
-    int                  m_spinnerAngle = 0;
-    bool                 m_morphing = false;
-    qreal                m_morphProgress = 0.0;
+    QTimer             *m_frameTimer;
+    QTimer             *m_dismissTimer;
+    QTimer             *m_connectTimer;
+    QTimer             *m_errorTimer;
+    StylusState         m_state;
+    bool                m_btConnected = false;
+    bool                m_gaveUp = false;
+    int                 m_connectTimeoutMs = PopupConfig::kDefaultConnectTimeoutMs;
+    int                 m_screenW = 1080;
 
-    int m_animStart = 0;
-    int m_animEnd   = 0;
-    QElapsedTimer m_elapsed;
-    QEasingCurve m_animCurve;
+    IslandMode m_mode        = IslandMode::Hidden;
+    Content    m_content     = Content::None;
+    Content    m_nextContent = Content::None;
+    bool       m_swapPending   = false;  /* waiting for old content to fade */
+    bool       m_revealPending = false;  /* waiting for the shape to arrive */
+    bool       m_collapsing    = false;
+    bool       m_layerVisible  = false;
+    QString    m_errorText;
+
+    Spring m_width;         /* island size */
+    Spring m_height;
+    Spring m_presence;      /* 0 = gone, 1 = fully there: scale and opacity */
+    Spring m_contentAlpha;  /* content fade, 0..1 */
+    Spring m_shake;         /* horizontal offset, kicked on errors */
+    Spring m_pulse;         /* extra scale, kicked on charging changes */
+    Spring m_battery;       /* displayed capacity, 0..100 */
+    qreal  m_fromW = 0.0;
+    qreal  m_fromH = 0.0;
+
+    QElapsedTimer m_clock;      /* since the frame loop started; spinner phase */
+    qint64        m_lastFrameNs = 0;
 
     QImage m_imageBuffer;
-
-    QRect        m_capsuleRect;
-    QRect        m_waitingChipRect;
-    QRect        m_glyphRect;
-    QRect        m_textRect;
-    QRect        m_limitRect;
-
     QFont  m_titleFont;
     QFont  m_subFont;
+    QFont  m_compactFont;
 };

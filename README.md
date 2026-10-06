@@ -1,6 +1,6 @@
 # stylus-popup
 
-A floating status capsule for the Xiaomi Pad 5's active stylus, on Wayland.
+A Dynamic Island style status pill for the Xiaomi Pad 5's active stylus, on Wayland.
 It reads the modified **IDTP9418** driver (`/dev/idtp9418`), shows the pen's
 battery state in a `wlr-layer-shell` overlay at the top of the screen, and pairs
 the pen over Bluetooth as soon as it attaches.
@@ -10,15 +10,25 @@ a double click and a long press each getting its own command.
 
 ## What it shows
 
-| Pen state | Popup |
+| Pen state | Island |
 | --- | --- |
-| Attached, pairing still in flight | Small chip with a spinner and `Connecting…` |
-| Attached, paired and connected | Battery glyph, capacity, `LIMIT nn%` badge, model name |
-| Detached | Slides away |
+| Attached, pairing still in flight | Compact pill: MD3 progress indicator and `Connecting…` |
+| Attached, paired and connected | Expanded pill: battery ring, capacity, `Charging` / `Connected` with the charge limit, and a bolt chip while charging |
+| Pairing failed or timed out | Compact pill with an error icon; shakes, then goes away |
+| Detached | Shrinks back into a dot and disappears |
 
-The capsule hides itself again a few seconds after it appears. Colours follow
-the matugen-generated qt6ct scheme (`~/.config/qt6ct/colors/matugen.conf`) and
-update live when that file changes; a built-in palette is used otherwise.
+The island grows out of a dot at the top centre of the screen and morphs
+between its forms on spring physics: the old content fades out, the shape
+morphs, and the new content fades in once the shape has mostly arrived. Inner
+elements are concentric with the rounded outline. A change in charging state
+gives the island a short pulse, and the battery ring follows the capacity
+smoothly. The expanded island collapses again a few seconds after it appears.
+
+Colours follow the matugen-generated qt6ct scheme
+(`~/.config/qt6ct/colors/matugen.conf`) and update live when that file
+changes; a built-in palette is used otherwise. Text is Chinese under a Chinese
+system locale and English otherwise. The surface has an empty input region,
+so it never blocks clicks on the bar beneath it.
 
 ## Requirements
 

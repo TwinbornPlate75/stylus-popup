@@ -23,6 +23,7 @@ ColorTheme::ColorTheme(QObject *parent)
     , m_lowBattery("#FF6E6E")
     , m_charging("#79FFC1")
 {
+    deriveRoles();
 }
 
 QStringList ColorTheme::candidatePaths() const
@@ -82,4 +83,17 @@ void ColorTheme::loadFrom(const QString &path)
     m_progressTrack    = get("Colors:View/BackgroundAlternate",   m_progressTrack);
     m_lowBattery       = get("Colors:Button/BackgroundNegative",  m_lowBattery);
     m_charging         = get("Colors:Button/BackgroundPositive",  m_charging);
+
+    deriveRoles();
+}
+
+void ColorTheme::deriveRoles()
+{
+    /* The island sits a step below the window surface, close to the tone of
+     * the pills on the DMS bar, so it reads as part of the shell rather than
+     * as a hole punched into the screen. */
+    m_islandFill = m_surface.darker(154);
+
+    m_outline = m_onSurface;
+    m_outline.setAlphaF(0.08);
 }
