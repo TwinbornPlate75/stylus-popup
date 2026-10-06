@@ -136,6 +136,13 @@ bool WaylandLayerSurface::init(int width, int height, uint32_t anchor, Layer lay
     /* Tell the compositor our buffers are at m_scale× the logical size */
     wl_surface_set_buffer_scale(m_surface, m_scale);
 
+    /* Empty input region: the surface spans the full width of the screen but
+     * only ever shows a small island, so it must not swallow pointer or touch
+     * input aimed at the bar underneath. */
+    wl_region *inputRegion = wl_compositor_create_region(m_compositor);
+    wl_surface_set_input_region(m_surface, inputRegion);
+    wl_region_destroy(inputRegion);
+
     m_layerSurf = zwlr_layer_shell_v1_get_layer_surface(
         m_layerShell, m_surface, nullptr,
         static_cast<uint32_t>(layer), "popup");
